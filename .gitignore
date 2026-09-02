@@ -15,3 +15,5 @@ venv/
 .idea/
 .vscode/
 .system_generated/
+AGENTS.md
+PROJECT_CONTEXT.md
