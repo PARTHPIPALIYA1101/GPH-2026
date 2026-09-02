@@ -10,23 +10,27 @@ import { writeAudit } from '../repositories/audit.repository.js';
 import { failure, success } from '../utils/api-response.js';
 
 const createInvestigationSchema = z.object({
-  title: z.string().min(5),
-  description: z.string().min(10),
+  title: z.string({ required_error: 'Title is required' }).min(5, 'Title must be at least 5 characters long'),
+  description: z.string({ required_error: 'Description is required' }).min(10, 'Case brief/description must be at least 10 characters long'),
   targetType: z.string().default('PLATE'),
-  targetValue: z.string().min(2),
+  targetValue: z.string({ required_error: 'Target value is required' }).min(2, 'Target value must be at least 2 characters long'),
   searchCriteria: z.record(z.any()).default({}),
-  intervalMinutes: z.coerce.number().min(15).max(1440).default(360),
-  expiresAt: z.string().datetime().optional().nullable(),
-  leadInvestigatorId: z.string().uuid().optional()
+  intervalMinutes: z.coerce.number().min(15, 'Interval must be at least 15 minutes').max(1440, 'Interval cannot exceed 24 hours').default(360),
+  expiresAt: z.preprocess(
+    (val) => (val === '' || val === undefined ? null : val),
+    z.string().datetime({ message: 'Expiration date must be a valid ISO datetime string' }).nullable().optional()
+  ),
+  leadInvestigatorId: z.string().uuid('Lead investigator ID must be a valid UUID').optional(),
+  departmentId: z.string().uuid('Department ID must be a valid UUID').optional()
 });
 
 const decisionSchema = z.object({
-  status: z.enum(['RESOLVED', 'CLOSED', 'UNDER_REVIEW', 'MATCH_FOUND']),
-  decisionNotes: z.string().min(5).max(2000)
+  status: z.enum(['RESOLVED', 'CLOSED', 'UNDER_REVIEW', 'MATCH_FOUND'], { errorMap: () => ({ message: 'Status must be one of RESOLVED, CLOSED, UNDER_REVIEW, MATCH_FOUND' }) }),
+  decisionNotes: z.string({ required_error: 'Decision notes are required' }).min(5, 'Decision notes must be at least 5 characters long').max(2000)
 });
 
 const attachSchema = z.object({
-  detectionId: z.string().uuid(),
+  detectionId: z.string().uuid('Valid detection ID is required'),
   notes: z.string().optional(),
   relevanceScore: z.coerce.number().min(0).max(1).default(1.0)
 });
@@ -60,14 +64,15 @@ export async function createNewInvestigation(req, res) {
 
   const parsed = createInvestigationSchema.safeParse(req.body);
   if (!parsed.success) {
-    return failure(res, 'VALIDATION_ERROR', 'Invalid investigation parameters.', 400);
+    const errorDetails = parsed.error.issues.map((i) => i.message).join('. ');
+    return failure(res, 'VALIDATION_ERROR', `Invalid investigation parameters: ${errorDetails}`, 400);
   }
 
   const payload = parsed.data;
   const created = await createInvestigation({
     title: payload.title,
     description: payload.description,
-    departmentId: req.user.departmentId,
+    departmentId: req.user.departmentId || payload.departmentId,
     userId: req.user.id,
     leadInvestigatorId: payload.leadInvestigatorId || req.user.id,
     targetType: payload.targetType,
@@ -104,7 +109,8 @@ export async function submitDecision(req, res) {
 
   const parsed = decisionSchema.safeParse(req.body);
   if (!parsed.success) {
-    return failure(res, 'VALIDATION_ERROR', 'Decision notes and valid status are required.', 400);
+    const errorDetails = parsed.error.issues.map((i) => i.message).join('. ');
+    return failure(res, 'VALIDATION_ERROR', `Invalid decision parameters: ${errorDetails}`, 400);
   }
 
   const result = await decideInvestigation(req.params.id, {
@@ -133,7 +139,8 @@ export async function attachDetection(req, res) {
 
   const parsed = attachSchema.safeParse(req.body);
   if (!parsed.success) {
-    return failure(res, 'VALIDATION_ERROR', 'Valid detectionId is required.', 400);
+    const errorDetails = parsed.error.issues.map((i) => i.message).join('. ');
+    return failure(res, 'VALIDATION_ERROR', `Invalid attachment parameters: ${errorDetails}`, 400);
   }
 
   const result = await attachDetectionToInvestigation(

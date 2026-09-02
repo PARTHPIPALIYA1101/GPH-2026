@@ -130,6 +130,14 @@ export async function createInvestigation({
   const client = await database().connect();
 
   try {
+    let targetDeptId = departmentId;
+    if (!targetDeptId) {
+      const deptRes = await client.query(
+        `SELECT id FROM departments WHERE code = 'POLICE' UNION ALL SELECT id FROM departments LIMIT 1`
+      );
+      targetDeptId = deptRes.rows[0]?.id;
+    }
+
     await client.query('BEGIN');
     const result = await client.query(
       `INSERT INTO investigations (
@@ -138,7 +146,7 @@ export async function createInvestigation({
       ) VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', $7, $8, $9, $10)
       RETURNING id, case_number AS "caseNumber", title, status, created_at AS "createdAt"`,
       [
-        caseNumber, title, description, departmentId, userId,
+        caseNumber, title, description, targetDeptId, userId,
         leadInvestigatorId || userId, targetType, targetValue.toUpperCase(),
         JSON.stringify(searchCriteria), expiresAt || null
       ]
@@ -147,8 +155,8 @@ export async function createInvestigation({
 
     await client.query(
       `INSERT INTO investigation_schedules (investigation_id, interval_minutes, next_run_at)
-       VALUES ($1, $2, now() + ($2 || ' minutes')::interval)`,
-      [inv.id, intervalMinutes]
+       VALUES ($1, $2, now() + make_interval(mins => $3))`,
+      [inv.id, intervalMinutes, intervalMinutes]
     );
 
     await client.query('COMMIT');

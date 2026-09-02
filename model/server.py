@@ -5,6 +5,7 @@ import json
 import asyncio
 import threading
 import traceback
+import urllib.parse
 from typing import Dict, Any, Optional
 import cv2
 import numpy as np
@@ -123,9 +124,45 @@ def connect_video_stream(stream_url: str) -> tuple[Optional[cv2.VideoCapture], b
     return None, False
 
 
+def is_valid_routable_url(url: Optional[str]) -> bool:
+    if not url or not url.startswith(("rtsp://", "http://", "https://")):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host or host in ("test", "invalid", "localhost") or host.startswith("10.20.") or "internal.gov.in" in host:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def resolve_camera_rtsp_url(camera_id: str, provided_url: Optional[str] = None) -> str:
+    """Resolves camera_id to an official Sentinel RTSP live stream URL (cam01 .. cam30)."""
+    if provided_url and is_valid_routable_url(provided_url):
+        return provided_url
+
+    # Try fetching camera metadata from backend REST API
+    try:
+        res = requests.get(f"http://localhost:4000/api/cameras/{camera_id}", timeout=1.0)
+        if res.ok:
+            data = res.json()
+            cam_info = data.get("data") or {}
+            ref = cam_info.get("streamReference")
+            if is_valid_routable_url(ref):
+                return ref
+    except Exception:
+        pass
+
+    # Map camera_id deterministically to real live RTSP stream cam01..cam30
+    cam_index = (abs(hash(camera_id)) % 30) + 1
+    cam_num = f"{cam_index:02d}"
+    return f"rtsp://103.250.160.189:8554/stream/cam{cam_num}"
+
+
 def ai_job_worker(job_id: str, camera_id: str, stream_url: Optional[str]):
     """Background worker processing real RTSP video stream."""
-    if not stream_url:
+    if not stream_url or not is_valid_routable_url(stream_url):
         stream_url = resolve_camera_rtsp_url(camera_id, stream_url)
 
     print(f"[Sentinel AI Worker] Starting inference thread for job {job_id} (Camera: {camera_id}, Stream: {stream_url})")
@@ -137,10 +174,15 @@ def ai_job_worker(job_id: str, camera_id: str, stream_url: Optional[str]):
     cap = None
     use_live_cap = False
     reconnect_backoff = 2.0  # Sentinel Guide §3 exponential backoff start at ~2s
+    last_connect_attempt = 0.0
 
+    now = time.time()
+    last_connect_attempt = now
     cap, use_live_cap = connect_video_stream(stream_url)
     if use_live_cap:
         print(f"[Sentinel AI Worker] Successfully connected to live RTSP stream: {stream_url}")
+
+    frame_counter = 0
 
     try:
         while job.get("running", False):
@@ -148,22 +190,29 @@ def ai_job_worker(job_id: str, camera_id: str, stream_url: Optional[str]):
             annotated_frame = None
             frame = None
             event_payload = {"timestamp": datetime.now(timezone.utc).isoformat(), "vehicle_count": 0, "detections": []}
+            frame_counter += 1
 
             if use_live_cap:
                 if cap is None or not cap.isOpened():
-                    print(f"[Sentinel AI Worker] Stream disconnected. Reconnecting with backoff {reconnect_backoff:.1f}s...")
-                    time.sleep(reconnect_backoff)
-                    reconnect_backoff = min(30.0, reconnect_backoff * 1.5)
-                    cap, use_live_cap = connect_video_stream(stream_url)
-                    continue
+                    now = time.time()
+                    if now - last_connect_attempt > reconnect_backoff:
+                        print(f"[Sentinel AI Worker] Stream disconnected. Reconnecting to {stream_url}...")
+                        last_connect_attempt = now
+                        reconnect_backoff = min(30.0, reconnect_backoff * 1.5)
+                        cap, use_live_cap = connect_video_stream(stream_url)
+                    else:
+                        time.sleep(0.05)
+                        continue
 
                 ret, frame = cap.read()
                 if not ret:
                     print(f"[Sentinel AI Worker] Interrupted/End of stream on {stream_url}. Attempting reconnect...")
-                    cap.release()
+                    if cap:
+                        cap.release()
                     cap = None
-                    time.sleep(1.0)
-                    cap, use_live_cap = connect_video_stream(stream_url)
+                    use_live_cap = False
+                    last_connect_attempt = time.time()
+                    time.sleep(0.5)
                     continue
 
                 # Reset backoff on successful frame read
@@ -182,7 +231,11 @@ def ai_job_worker(job_id: str, camera_id: str, stream_url: Optional[str]):
                 loading_frame = create_loading_frame(camera_id)
                 annotated_frame = loading_frame
                 frame = loading_frame
-                cap, use_live_cap = connect_video_stream(stream_url)
+
+                now = time.time()
+                if now - last_connect_attempt > 5.0:
+                    last_connect_attempt = now
+                    cap, use_live_cap = connect_video_stream(stream_url)
 
             # Encode raw frame to JPEG for Raw stream view
             if frame is not None:
@@ -234,95 +287,6 @@ def ai_job_worker(job_id: str, camera_id: str, stream_url: Optional[str]):
         job["running"] = False
         job["status"] = "STOPPED"
         print(f"[Sentinel AI Worker] Worker thread finished for job {job_id}")
-
-
-@app.on_event("startup")
-def startup_event():
-    print("[Sentinel AI Service] Server starting on http://localhost:8000")
-    # Initialize pipeline in background thread to avoid blocking server boot
-    threading.Thread(target=get_or_init_pipeline, daemon=True).start()
-
-
-@app.get("/health")
-@app.get("/api/v1/health")
-def health_check():
-    return {
-        "status": "UP",
-        "service": "Sentinel AI Inference Pipeline",
-        "models_loaded": pipeline_instance is not None,
-        "active_jobs_count": len([j for j in active_jobs.values() if j.get("running")]),
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-
-
-@app.get("/api/v1/jobs")
-def list_jobs():
-    return {
-        "success": True,
-        "data": list(active_jobs.values())
-    }
-
-
-def mjpeg_generator(camera_id: str, raw: bool = False):
-    """Generator function that yields multipart boundary frames for MJPEG stream."""
-    while True:
-        target_dict = camera_raw_frames if raw else camera_latest_frames
-        frame_bytes = target_dict.get(camera_id) or camera_latest_frames.get(camera_id)
-        if not frame_bytes:
-            # Yield sleek loading frame while worker establishes RTSP connection
-            blank = create_loading_frame(camera_id)
-            _, jpeg_buf = cv2.imencode('.jpg', blank)
-            frame_bytes = jpeg_buf.tobytes()
-
-
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-        time.sleep(0.05)
-
-
-@app.get("/api/v1/streams/{camera_id}/mjpeg")
-def stream_mjpeg(camera_id: str):
-    if camera_id not in camera_jobs or not active_jobs.get(camera_jobs[camera_id], {}).get("running"):
-        start_job(StartJobRequest(cameraId=camera_id))
-
-    return StreamingResponse(
-        mjpeg_generator(camera_id, raw=False),
-        media_type="multipart/x-mixed-replace; boundary=frame"
-    )
-
-
-@app.get("/api/v1/streams/{camera_id}/raw_mjpeg")
-def stream_raw_mjpeg(camera_id: str):
-    if camera_id not in camera_jobs or not active_jobs.get(camera_jobs[camera_id], {}).get("running"):
-        start_job(StartJobRequest(cameraId=camera_id))
-
-    return StreamingResponse(
-        mjpeg_generator(camera_id, raw=True),
-        media_type="multipart/x-mixed-replace; boundary=frame"
-    )
-
-
-def resolve_camera_rtsp_url(camera_id: str, provided_url: Optional[str] = None) -> str:
-    """Resolves camera_id to an official Sentinel RTSP live stream URL (cam01 .. cam30)."""
-    if provided_url and (provided_url.startswith(("rtsp://", "http://", "https://"))):
-        return provided_url
-
-    # Try fetching camera metadata from backend REST API
-    try:
-        res = requests.get(f"http://localhost:4000/api/cameras/{camera_id}", timeout=1.0)
-        if res.ok:
-            data = res.json()
-            cam_info = data.get("data") or {}
-            ref = cam_info.get("streamReference")
-            if ref and ref.startswith("rtsp://"):
-                return ref
-    except Exception:
-        pass
-
-    # Map camera_id deterministically to real live RTSP stream cam01..cam30
-    cam_index = (abs(hash(camera_id)) % 30) + 1
-    cam_num = f"{cam_index:02d}"
-    return f"rtsp://103.250.160.189:8554/stream/cam{cam_num}"
 
 
 @app.post("/api/v1/jobs")

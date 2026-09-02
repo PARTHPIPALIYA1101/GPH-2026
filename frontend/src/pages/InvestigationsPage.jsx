@@ -11,6 +11,7 @@ export function InvestigationsPage() {
   // Modal states
   const [showOpenModal, setShowOpenModal] = useState(false);
   const [showDecisionModal, setShowDecisionModal] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const [openForm, setOpenForm] = useState({
     title: '',
@@ -60,6 +61,21 @@ export function InvestigationsPage() {
 
   async function handleOpenInvestigation(e) {
     e.preventDefault();
+    setFormError('');
+
+    if (openForm.title.trim().length < 5) {
+      setFormError('Case Title must be at least 5 characters long.');
+      return;
+    }
+    if (openForm.targetValue.trim().length < 2) {
+      setFormError('Target Value must be at least 2 characters long.');
+      return;
+    }
+    if (openForm.description.trim().length < 10) {
+      setFormError('Case Brief / Investigation Notes must be at least 10 characters long.');
+      return;
+    }
+
     try {
       const res = await apiRequest('/investigations', {
         method: 'POST',
@@ -72,11 +88,12 @@ export function InvestigationsPage() {
       if (res.success) {
         alert(`Investigation case ${res.data.caseNumber} opened successfully.`);
         setShowOpenModal(false);
+        setFormError('');
         setOpenForm({ title: '', description: '', targetValue: '', targetType: 'PLATE', intervalMinutes: 360, expiresAt: '' });
         loadInvestigations();
       }
     } catch (err) {
-      alert(`Failed to open investigation: ${err.message}`);
+      setFormError(err.message);
     }
   }
 
@@ -111,7 +128,7 @@ export function InvestigationsPage() {
           </p>
         </div>
         {(isOfficer || isInvestigator || isDeptHead || isStateAdmin) && (
-          <button className="btn btn-primary" onClick={() => setShowOpenModal(true)}>
+          <button className="btn btn-primary" onClick={() => { setFormError(''); setShowOpenModal(true); }}>
             + Open New Case
           </button>
         )}
@@ -289,24 +306,38 @@ export function InvestigationsPage() {
             </div>
             <form onSubmit={handleOpenInvestigation}>
               <div className="modal-body">
+                {formError && (
+                  <div style={{
+                    padding: '10px 12px',
+                    marginBottom: 12,
+                    borderRadius: 4,
+                    backgroundColor: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    color: '#991b1b',
+                    fontSize: '12.5px',
+                    fontWeight: 500
+                  }}>
+                    ⚠️ {formError}
+                  </div>
+                )}
                 <div className="form-group">
-                  <label>Case Title *</label>
+                  <label>Case Title (min 5 chars) *</label>
                   <input
                     type="text"
                     required
                     placeholder="e.g. Investigation into SG Highway Luxury Vehicle Theft"
                     value={openForm.title}
-                    onChange={(e) => setOpenForm({ ...openForm, title: e.target.value })}
+                    onChange={(e) => { setFormError(''); setOpenForm({ ...openForm, title: e.target.value }); }}
                   />
                 </div>
                 <div className="form-group">
-                  <label>Target Value (e.g. License Plate Number) *</label>
+                  <label>Target Value (e.g. License Plate Number, min 2 chars) *</label>
                   <input
                     type="text"
                     required
                     placeholder="e.g. GJ01AB1234"
                     value={openForm.targetValue}
-                    onChange={(e) => setOpenForm({ ...openForm, targetValue: e.target.value })}
+                    onChange={(e) => { setFormError(''); setOpenForm({ ...openForm, targetValue: e.target.value }); }}
                   />
                 </div>
                 <div className="form-group">
@@ -323,7 +354,7 @@ export function InvestigationsPage() {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>Case Expiration Date</label>
+                  <label>Case Expiration Date (Optional)</label>
                   <input
                     type="date"
                     value={openForm.expiresAt}
@@ -331,13 +362,13 @@ export function InvestigationsPage() {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Case Brief / Investigation Notes *</label>
+                  <label>Case Brief / Investigation Notes (min 10 chars) *</label>
                   <textarea
                     rows="3"
                     required
                     placeholder="Detail the case background, FIR numbers, suspect profile, or operational goals..."
                     value={openForm.description}
-                    onChange={(e) => setOpenForm({ ...openForm, description: e.target.value })}
+                    onChange={(e) => { setFormError(''); setOpenForm({ ...openForm, description: e.target.value }); }}
                   />
                 </div>
               </div>

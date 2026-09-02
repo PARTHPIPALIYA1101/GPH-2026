@@ -72,14 +72,7 @@ export class HttpAIClient extends BaseAIClient {
   }
 
   async isConfigured() {
-    if (!this.baseUrl) return false;
-    try {
-      const response = await fetch(`${this.baseUrl}/health`, { signal: AbortSignal.timeout(1000) });
-      return response.ok;
-    } catch {
-      // Return true if API URL is configured, enabling fallback handling
-      return true;
-    }
+    return Boolean(this.baseUrl);
   }
 
   async startJob({ cameraId, streamUrl, profile = 'standard_surveillance', priority = 'normal' }) {
