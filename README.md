@@ -135,6 +135,7 @@ Visit the administrative control room portal at **`http://localhost:5173`**.
 - [RBAC & Scope Security Model](docs/rbac.md)
 - [Database Schema & ERD](docs/database-schema.md)
 - [AI Integration Contract](docs/ai-integration.md)
+- [Changelog & Bug Fixes](CHANGELOG.md)
 - [Contributing Guidelines](CONTRIBUTING.md)
 
 ---
