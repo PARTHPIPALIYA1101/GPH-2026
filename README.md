@@ -2,12 +2,41 @@
 
 > **Official Gujarat State Police & Public Safety Video Intelligence & ANPR Surveillance Portal**
 
+[![CI Pipeline](https://github.com/PARTHPIPALIYA1101/GPH-2026/actions/workflows/ci.yml/badge.svg)](https://github.com/PARTHPIPALIYA1101/GPH-2026/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform Version](https://img.shields.io/badge/Sentinel-v1.0.0-blue.svg)](https://sentinel.gujarat.gov.in)
 [![AI Engine](https://img.shields.io/badge/YOLOv11-ANPR%20ByteTrack-green.svg)](#sentinel-ai-microservice)
 [![PostGIS](https://img.shields.io/badge/PostgreSQL%2FPostGIS-16-navy.svg)](#technology-stack)
 [![React](https://img.shields.io/badge/React-19-cyan.svg)](#technology-stack)
 
 A production-grade, centralized administrative video intelligence and surveillance platform built for the **Government of Gujarat (Home Department & State Crime Records Bureau)**. Designed to connect state camera grids, run real-time YOLOv11 vehicle detection + license plate localization (ANPR), manage inter-departmental access sharing, and orchestrate control room operations.
+
+---
+
+## 🏗️ High-Level System Architecture
+
+```mermaid
+graph TD
+    subgraph Control Room Client Layer
+        A[React 19 Portal / Control Room Dashboard] -->|REST / MJPEG| B[NGINX Reverse Proxy / Vite Gateway]
+    end
+
+    subgraph Core Application Service Layer
+        B -->|REST API Port 4000| C[Node.js 20 Express Backend API]
+        B -->|MJPEG Stream Port 8000| D[Python FastAPI AI Model Microservice]
+    end
+
+    subgraph AI Inference Pipeline
+        D -->|YOLOv11 + ByteTrack| E[Vehicle & Plate Detector]
+        E -->|Localization Crop| F[EasyOCR ANPR Engine]
+        F -->|Post Detections| C
+    end
+
+    subgraph Data & Storage Layer
+        C -->|Spatial Queries & RBAC| G[(PostgreSQL 16 + PostGIS 3.4 DB)]
+        C -->|Session & Live Views| H[(Redis 7 Cache)]
+    end
+```
 
 ---
 
@@ -106,9 +135,11 @@ Visit the administrative control room portal at **`http://localhost:5173`**.
 - [RBAC & Scope Security Model](docs/rbac.md)
 - [Database Schema & ERD](docs/database-schema.md)
 - [AI Integration Contract](docs/ai-integration.md)
+- [Contributing Guidelines](CONTRIBUTING.md)
 
 ---
 
 ## 📄 License & Ownership
 
+Distributed under the [MIT License](LICENSE).
 Developed for **Government of Gujarat - State Crime Records Bureau (SCRB)** under the **Sentinel Hackathon GPH-2026**.
