@@ -1,0 +1,7 @@
+import crypto from 'node:crypto';
+
+export function requestContext(req, res, next) {
+  req.id = req.header('x-request-id') || crypto.randomUUID();
+  res.setHeader('x-request-id', req.id);
+  next();
+}

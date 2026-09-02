@@ -1,0 +1,17 @@
+node_modules/
+*/node_modules/
+dist/
+*/dist/
+.env
+.env.*
+!.env.example
+coverage/
+*.log
+__pycache__/
+*/__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+.system_generated/
