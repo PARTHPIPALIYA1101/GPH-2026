@@ -394,6 +394,46 @@ def get_stream_info(camera_id: str):
     }
 
 
+def _mjpeg_generator(frame_store: dict, camera_id: str):
+    """Yields multipart JPEG frames for MJPEG streaming."""
+    blank_frame: Optional[bytes] = None
+    while True:
+        frame_bytes = frame_store.get(camera_id)
+        if frame_bytes is None:
+            # Serve a 1x1 black JPEG placeholder until frames arrive
+            if blank_frame is None:
+                img = np.zeros((720, 1280, 3), dtype=np.uint8)
+                img[:] = (15, 23, 42)
+                cv2.putText(img, "Waiting for stream...", (480, 360),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (100, 116, 139), 2, cv2.LINE_AA)
+                _, buf = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                blank_frame = buf.tobytes()
+            frame_bytes = blank_frame
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+        )
+        time.sleep(0.05)  # ~20 fps
+
+
+@app.get("/api/v1/streams/{camera_id}/mjpeg")
+def stream_mjpeg(camera_id: str):
+    """AI-annotated MJPEG stream for a camera."""
+    return StreamingResponse(
+        _mjpeg_generator(camera_latest_frames, camera_id),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/api/v1/streams/{camera_id}/raw_mjpeg")
+def stream_raw_mjpeg(camera_id: str):
+    """Raw (unannotated) MJPEG stream for a camera."""
+    return StreamingResponse(
+        _mjpeg_generator(camera_raw_frames, camera_id),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)

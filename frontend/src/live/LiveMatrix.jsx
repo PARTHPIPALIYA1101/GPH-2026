@@ -1,21 +1,86 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../services/api.js';
 
+const SLOTS_STORAGE_KEY = 'gov_live_slots';
+const GRID_STORAGE_KEY = 'gov_live_grid';
+
+function loadSavedSlots() {
+  try {
+    const raw = localStorage.getItem(SLOTS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : Array(16).fill(null);
+  } catch {
+    return Array(16).fill(null);
+  }
+}
+
+function loadSavedGrid() {
+  try {
+    const raw = localStorage.getItem(GRID_STORAGE_KEY);
+    return raw ? Number(raw) : 4;
+  } catch {
+    return 4;
+  }
+}
+
 export function LiveMatrix({ initialCamera = null }) {
-  const [gridSize, setGridSize] = useState(4); // 1, 4, 9, 16
-  const [slots, setSlots] = useState(Array(16).fill(null));
+  const [gridSize, setGridSize] = useState(loadSavedGrid);
+  const [slots, setSlots] = useState(() => {
+    const saved = loadSavedSlots();
+    // Strip old session data — sessions are ephemeral and must be re-created
+    return saved.map((s) => s ? { camera: s.camera, streamType: s.streamType, startedAt: s.startedAt, session: null } : null);
+  });
   const [cameraPickerSlot, setCameraPickerSlot] = useState(null);
   const [availableCameras, setAvailableCameras] = useState([]);
   const [loadingCameras, setLoadingCameras] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
   const [activeSessionStats, setActiveSessionStats] = useState({ activeViews: 0, maxViews: 16 });
 
+  // Persist grid size to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem(GRID_STORAGE_KEY, String(gridSize));
+  }, [gridSize]);
+
+  // Persist slot camera assignments (not sessions) whenever slots change
+  useEffect(() => {
+    const toSave = slots.map((s) =>
+      s ? { camera: s.camera, streamType: s.streamType, startedAt: s.startedAt } : null
+    );
+    localStorage.setItem(SLOTS_STORAGE_KEY, JSON.stringify(toSave));
+  }, [slots]);
+
   useEffect(() => {
     loadSessionStats();
+    // Restore sessions for pre-saved slots
+    const saved = loadSavedSlots();
+    saved.forEach((s, idx) => {
+      if (s && s.camera) {
+        restoreCameraSession(idx, s.camera, s.streamType || 'AI_ANNOTATED');
+      }
+    });
     if (initialCamera) {
       openCameraInSlot(0, initialCamera, 'AI_ANNOTATED');
     }
   }, []);
+
+  async function restoreCameraSession(slotIndex, camera, streamType) {
+    try {
+      const res = await apiRequest('/streams/session', {
+        method: 'POST',
+        body: { cameraId: camera.id, streamType }
+      });
+      if (res.success && res.data) {
+        setSlots((prev) => {
+          const updated = [...prev];
+          updated[slotIndex] = { camera, session: res.data, streamType, startedAt: Date.now() };
+          return updated;
+        });
+      }
+    } catch {
+      // If session restore fails, leave slot showing camera info without session
+    }
+  }
+
+
 
   async function loadSessionStats() {
     try {
