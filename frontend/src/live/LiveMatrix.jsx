@@ -1,138 +1,198 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { apiRequest } from '../services/api.js';
+import { useUI } from '../contexts/UIContext.jsx';
+import { Plus, X, Activity, Video, AlertCircle, Search as SearchIcon, Radio, Zap } from 'lucide-react';
 
 const SLOTS_STORAGE_KEY = 'gov_live_slots';
-const GRID_STORAGE_KEY = 'gov_live_grid';
+const GRID_STORAGE_KEY  = 'gov_live_grid';
 
 function loadSavedSlots() {
   try {
     const raw = localStorage.getItem(SLOTS_STORAGE_KEY);
     return raw ? JSON.parse(raw) : Array(16).fill(null);
-  } catch {
-    return Array(16).fill(null);
-  }
+  } catch { return Array(16).fill(null); }
 }
 
 function loadSavedGrid() {
   try {
     const raw = localStorage.getItem(GRID_STORAGE_KEY);
     return raw ? Number(raw) : 4;
-  } catch {
-    return 4;
-  }
+  } catch { return 4; }
+}
+
+function sinceMs(ts) {
+  if (!ts) return null;
+  const m = Math.floor((Date.now() - ts) / 60000);
+  return m < 1 ? 'JUST NOW' : `${m}m`;
 }
 
 export function LiveMatrix({ initialCamera = null }) {
+  const { showToast, showModal } = useUI();
   const [gridSize, setGridSize] = useState(loadSavedGrid);
-  const [slots, setSlots] = useState(() => {
-    const saved = loadSavedSlots();
-    // Strip old session data — sessions are ephemeral and must be re-created
-    return saved.map((s) => s ? { camera: s.camera, streamType: s.streamType, startedAt: s.startedAt, session: null } : null);
-  });
+  
+  const [slots, setSlots] = useState(() => Array(16).fill(null));
+  const [slotStates, setSlotStates] = useState({});
+  const slotsRef = useRef(slots);
+  
+  useEffect(() => { slotsRef.current = slots; }, [slots]);
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   const [cameraPickerSlot, setCameraPickerSlot] = useState(null);
-  const [availableCameras, setAvailableCameras] = useState([]);
-  const [loadingCameras, setLoadingCameras] = useState(false);
-  const [searchFilter, setSearchFilter] = useState('');
+  const [availableCameras, setAvailableCameras]  = useState([]);
+  const [loadingCameras, setLoadingCameras]       = useState(false);
+  const [searchFilter, setSearchFilter]           = useState('');
   const [activeSessionStats, setActiveSessionStats] = useState({ activeViews: 0, maxViews: 16 });
 
-  // Persist grid size to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem(GRID_STORAGE_KEY, String(gridSize));
-  }, [gridSize]);
+  useEffect(() => { localStorage.setItem(GRID_STORAGE_KEY, String(gridSize)); }, [gridSize]);
 
-  // Persist slot camera assignments (not sessions) whenever slots change
   useEffect(() => {
     const toSave = slots.map((s) =>
-      s ? { camera: s.camera, streamType: s.streamType, startedAt: s.startedAt } : null
+      s?.camera ? { camera: s.camera, streamType: s.streamType, startedAt: s.startedAt } : null
     );
     localStorage.setItem(SLOTS_STORAGE_KEY, JSON.stringify(toSave));
   }, [slots]);
 
+  // Robust initialization and unmount cleanup
   useEffect(() => {
-    loadSessionStats();
-    // Restore sessions for pre-saved slots
-    const saved = loadSavedSlots();
-    saved.forEach((s, idx) => {
-      if (s && s.camera) {
-        restoreCameraSession(idx, s.camera, s.streamType || 'AI_ANNOTATED');
-      }
-    });
-    if (initialCamera) {
-      openCameraInSlot(0, initialCamera, 'AI_ANNOTATED');
-    }
-  }, []);
+    let active = true;
 
-  async function restoreCameraSession(slotIndex, camera, streamType) {
-    try {
-      const res = await apiRequest('/streams/session', {
-        method: 'POST',
-        body: { cameraId: camera.id, streamType }
+    async function init() {
+      loadSessionStats();
+      const saved = loadSavedSlots();
+      if (initialCamera) {
+         saved[0] = { camera: initialCamera, streamType: 'AI_ANNOTATED' };
+      }
+      
+      const promises = saved.map(async (s, i) => {
+        if (s && s.camera && active) {
+          // If initial load asks for AI, we ensure the job is requested
+          if (s.streamType === 'AI_ANNOTATED') {
+             try { await apiRequest('/ai/jobs', { method: 'POST', body: { cameraId: s.camera.id } }); } catch (e) {}
+          }
+          await openCameraInSlot(i, s.camera, s.streamType || 'AI_ANNOTATED', true);
+        }
       });
-      if (res.success && res.data) {
-        setSlots((prev) => {
-          const updated = [...prev];
-          updated[slotIndex] = { camera, session: res.data, streamType, startedAt: Date.now() };
-          return updated;
-        });
-      }
-    } catch {
-      // If session restore fails, leave slot showing camera info without session
+      await Promise.all(promises);
     }
-  }
 
+    init();
 
+    return () => {
+      active = false;
+      // Release all sessions on unmount
+      slotsRef.current.forEach(slot => {
+        if (slot?.session?.sessionId) {
+          apiRequest('/streams/session/release', { method: 'POST', body: { sessionId: slot.session.sessionId } }).catch(() => {});
+        }
+      });
+    };
+    // eslint-disable-next-line
+  }, [initialCamera?.id]);
 
   async function loadSessionStats() {
     try {
       const res = await apiRequest('/streams/stats');
-      if (res.success && res.data) {
-        setActiveSessionStats(res.data);
-      }
-    } catch {
-      // stats fallback
-    }
+      if (res.success && res.data && mountedRef.current) setActiveSessionStats(res.data);
+    } catch { /* Fallback */ }
   }
 
   async function openCameraPicker(slotIndex) {
     setCameraPickerSlot(slotIndex);
     setLoadingCameras(true);
+    setSearchFilter('');
     try {
       const res = await apiRequest('/cameras?limit=100');
-      if (res.success && res.data) {
-        setAvailableCameras(res.data.items || []);
-      }
+      if (res.success && res.data && mountedRef.current) setAvailableCameras(res.data.items || []);
     } catch (err) {
-      alert(`Failed to load authorized cameras: ${err.message}`);
+      if (mountedRef.current) showToast(`Failed to load cameras: ${err.message}`, 'danger');
     } finally {
-      setLoadingCameras(false);
+      if (mountedRef.current) setLoadingCameras(false);
     }
   }
 
-  const [slotStates, setSlotStates] = useState({});
+  async function handlePickerSelect(cam, streamType) {
+    if (streamType === 'AI_ANNOTATED') {
+      try {
+        const aiRes = await apiRequest('/ai/jobs', { method: 'POST', body: { cameraId: cam.id } });
+        if (!aiRes.success) throw new Error(aiRes.message || 'Failed to start AI job');
+      } catch (err) {
+        showToast(`AI Activation failed: ${err.message}`, 'danger');
+        return; // Don't add camera if AI fails
+      }
+    }
+    await openCameraInSlot(cameraPickerSlot, cam, streamType, false);
+  }
 
-  async function openCameraInSlot(slotIndex, camera, streamType = 'AI_ANNOTATED') {
+  async function openCameraInSlot(slotIndex, camera, streamType = 'AI_ANNOTATED', quiet = false) {
+    // 1. Release existing session in this slot if any
+    const existingSlot = slotsRef.current[slotIndex];
+    if (existingSlot?.session?.sessionId) {
+      try {
+        await apiRequest('/streams/session/release', { method: 'POST', body: { sessionId: existingSlot.session.sessionId } });
+      } catch (e) {}
+    }
+
     setSlotStates((prev) => ({ ...prev, [slotIndex]: 'LOADING' }));
+    
+    // Optimistically set the slot
+    setSlots((prev) => {
+      const u = [...prev];
+      u[slotIndex] = { camera, session: null, streamType, startedAt: Date.now() };
+      return u;
+    });
+
     try {
       const res = await apiRequest('/streams/session', {
         method: 'POST',
         body: { cameraId: camera.id, streamType }
       });
 
+      if (!mountedRef.current) {
+        if (res.success && res.data?.sessionId) {
+          apiRequest('/streams/session/release', { method: 'POST', body: { sessionId: res.data.sessionId } }).catch(()=>{});
+        }
+        return;
+      }
+
       if (res.success && res.data) {
-        const newSlots = [...slots];
-        newSlots[slotIndex] = {
-          camera,
-          session: res.data,
-          streamType,
-          startedAt: Date.now()
-        };
-        setSlots(newSlots);
+        setSlots((prev) => {
+          const updated = [...prev];
+          const currentInSlot = updated[slotIndex];
+          
+          if (currentInSlot?.camera?.id === camera.id && currentInSlot?.streamType === streamType) {
+            // Overwriting a session that somehow snuck in? Release it.
+            if (currentInSlot.session?.sessionId) {
+              apiRequest('/streams/session/release', { method: 'POST', body: { sessionId: currentInSlot.session.sessionId } }).catch(()=>{});
+            }
+            updated[slotIndex] = { ...currentInSlot, session: res.data };
+          } else {
+            // Orphaned session due to race conditions or slot changes
+            apiRequest('/streams/session/release', { method: 'POST', body: { sessionId: res.data.sessionId } }).catch(()=>{});
+          }
+          return updated;
+        });
         setCameraPickerSlot(null);
         loadSessionStats();
+        if (!quiet) showToast(`${camera.externalId} stream connected.`, 'success');
+      } else {
+        throw new Error(res.message || 'Failed to authorize stream');
       }
     } catch (err) {
-      alert(`Failed to authorize camera stream: ${err.message}`);
+      if (!mountedRef.current) return;
+      if (!quiet) showToast(`Stream auth failed: ${err.message}`, 'danger');
       setSlotStates((prev) => ({ ...prev, [slotIndex]: 'ERROR' }));
+      setSlots((prev) => {
+        const updated = [...prev];
+        if (updated[slotIndex]?.camera?.id === camera.id && updated[slotIndex]?.streamType === streamType) {
+          updated[slotIndex] = null;
+        }
+        return updated;
+      });
     }
   }
 
@@ -145,63 +205,91 @@ export function LiveMatrix({ initialCamera = null }) {
   }
 
   async function closeSlotStream(slotIndex) {
-    const slot = slots[slotIndex];
+    const slot = slotsRef.current[slotIndex];
     if (!slot) return;
-
-    try {
-      if (slot.session?.sessionId) {
+    
+    if (slot.session?.sessionId) {
+      try {
         await apiRequest('/streams/session/release', {
           method: 'POST',
           body: { sessionId: slot.session.sessionId }
         });
-      }
-    } catch {
-      // release safeguard
+      } catch (e) {}
     }
-
-    const newSlots = [...slots];
-    newSlots[slotIndex] = null;
-    setSlots(newSlots);
+    
+    setSlots((prev) => {
+      const u = [...prev];
+      u[slotIndex] = null;
+      return u;
+    });
+    setSlotStates((prev) => {
+      const u = { ...prev };
+      delete u[slotIndex];
+      return u;
+    });
     loadSessionStats();
   }
 
-  function toggleStreamType(slotIndex) {
-    const newSlots = [...slots];
-    if (!newSlots[slotIndex]) return;
-    const currentType = newSlots[slotIndex].streamType;
-    newSlots[slotIndex] = {
-      ...newSlots[slotIndex],
-      streamType: currentType === 'AI_ANNOTATED' ? 'RAW' : 'AI_ANNOTATED'
-    };
-    setSlots(newSlots);
-    setSlotStates((prev) => ({ ...prev, [slotIndex]: 'LOADING' }));
+  async function toggleStreamType(slotIndex) {
+    const slot = slotsRef.current[slotIndex];
+    if (!slot) return;
+    
+    const targetType = slot.streamType === 'AI_ANNOTATED' ? 'RAW' : 'AI_ANNOTATED';
+    
+    if (targetType === 'AI_ANNOTATED') {
+      try {
+        const aiRes = await apiRequest('/ai/jobs', { method: 'POST', body: { cameraId: slot.camera.id } });
+        if (!aiRes.success) throw new Error(aiRes.message || 'Failed to start AI job');
+        showToast(`Sentinel AI activated for ${slot.camera.externalId}`, 'success');
+      } catch (err) {
+        showToast(`AI Activation failed: ${err.message}`, 'danger');
+        return;
+      }
+    }
+    
+    await openCameraInSlot(slotIndex, slot.camera, targetType, false);
   }
 
-  function clearAllSlots() {
-    slots.forEach((_, idx) => closeSlotStream(idx));
-    setSlots(Array(16).fill(null));
-    setSlotStates({});
+  function confirmClearAll() {
+    showModal({
+      title: 'Clear All Feeds',
+      message: 'Are you sure you want to disconnect all active camera sessions?',
+      confirmText: 'Clear All',
+      type: 'danger',
+      onConfirm: () => {
+        slotsRef.current.forEach((_, idx) => closeSlotStream(idx));
+      }
+    });
   }
 
   const visibleSlots = slots.slice(0, gridSize);
-  const activeVisibleCount = visibleSlots.filter(Boolean).length;
-  const activeTotalCount = slots.filter(Boolean).length;
+  const activeVisibleCount = visibleSlots.filter(s => s && s.session && s.session.sessionId).length;
+
+  const GRIDS = [
+    { size: 1, label: '1×1' },
+    { size: 4, label: '2×2' },
+    { size: 9, label: '3×3' },
+    { size: 16, label: '4×4' },
+  ];
+
+  const filteredCameras = availableCameras.filter((c) =>
+    c.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
+    c.city?.toLowerCase().includes(searchFilter.toLowerCase()) ||
+    c.externalId.toLowerCase().includes(searchFilter.toLowerCase())
+  );
 
   return (
-    <div>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* ── Controls Bar ── */}
       <div className="live-matrix-controls">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <label style={{ fontWeight: 700, fontSize: '12px', color: 'var(--text-muted)' }}>Grid Layout:</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Grid presets */}
           <div style={{ display: 'flex', gap: 4 }}>
-            {[
-              { size: 1, label: '1x1 (Single)' },
-              { size: 4, label: '2x2 (4-Up)' },
-              { size: 9, label: '3x3 (9-Up)' },
-              { size: 16, label: '4x4 (16-Up)' }
-            ].map((g) => (
+            {GRIDS.map((g) => (
               <button
                 key={g.size}
-                className={`btn btn-sm ${gridSize === g.size ? 'btn-primary' : 'btn-secondary'}`}
+                className={`btn ${gridSize === g.size ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ padding: '5px 12px', fontSize: '12px', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em' }}
                 onClick={() => setGridSize(g.size)}
               >
                 {g.label}
@@ -209,122 +297,146 @@ export function LiveMatrix({ initialCamera = null }) {
             ))}
           </div>
           <button
-            className="btn btn-secondary btn-sm"
-            onClick={clearAllSlots}
-            style={{ marginLeft: 8, fontSize: '11px' }}
+            className="btn btn-secondary"
+            onClick={confirmClearAll}
+            style={{ padding: '5px 12px', fontSize: '12px' }}
           >
-            Clear Grid
+            <X size={12} /> CLEAR ALL
           </button>
         </div>
 
-        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-          Active Viewport Feeds: <strong>{activeVisibleCount}</strong> / {gridSize} Visible ({activeTotalCount} Total Session Views)
+        {/* Feed status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)' }}>
+            <Radio size={12} style={{ color: activeVisibleCount > 0 ? 'var(--status-success)' : 'var(--text-muted)', animation: activeVisibleCount > 0 ? 'pulse 2s infinite' : 'none' }} />
+            <strong style={{ color: 'var(--text-primary)' }}>{activeVisibleCount}</strong>
+            &nbsp;/ {gridSize} FEEDS ACTIVE
+          </div>
+          {activeSessionStats?.activeViews != null && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
+              SERVER: {activeSessionStats.activeViews}/{activeSessionStats.maxViews} SESSIONS
+            </div>
+          )}
         </div>
       </div>
 
+      {/* ── Surveillance Wall ── */}
       <div className={`matrix-grid matrix-grid-${gridSize}`}>
         {visibleSlots.map((slot, index) => {
-          const currentState = slotStates[index] || (slot ? 'LOADING' : 'IDLE');
-
+          const state = slotStates[index] || (slot ? 'LOADING' : 'IDLE');
           return (
-            <div key={index} className="video-cell">
+            <div
+              key={index}
+              className="video-cell"
+              onMouseEnter={e => { if (!slot) e.currentTarget.querySelector('.cell-empty-state')?.setAttribute('style', 'background:rgba(255,255,255,0.05)'); }}
+            >
               {slot ? (
                 <>
+                  {/* OSD TOP */}
                   <div className="video-cell-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span className={`badge badge-${slot.streamType === 'AI_ANNOTATED' ? 'active' : 'secondary'}`} style={{ fontSize: '9.5px', padding: '1px 5px' }}>
-                        {slot.streamType === 'AI_ANNOTATED' ? 'AI LIVE' : 'RAW RTSP'}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <div style={{
+                        width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                        background: state === 'CONNECTED' ? 'var(--status-success)' : state === 'RECONNECTING' ? 'var(--status-warning)' : 'var(--status-info)',
+                        boxShadow: state === 'CONNECTED' ? '0 0 5px var(--status-success)' : 'none',
+                        animation: state !== 'CONNECTED' ? 'pulse 1.5s infinite' : 'none'
+                      }} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, color: '#fff', letterSpacing: '0.05em', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+                        {slot.camera.externalId}
                       </span>
-                      <strong style={{ fontSize: '11.5px' }}>{slot.camera.name}</strong>
-                      <span style={{ color: '#94a3b8', fontSize: '10.5px' }}>({slot.camera.city})</span>
+                      {slot.camera.city && (
+                        <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.5)' }}>· {slot.camera.city}</span>
+                      )}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '10px', padding: '2px 5px' }}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span
+                        title="Toggle AI / RAW"
                         onClick={() => toggleStreamType(index)}
-                        title="Toggle Raw RTSP vs AI Annotated feed"
-                      >
-                        {slot.streamType === 'AI_ANNOTATED' ? 'Switch to Raw' : 'Switch to AI'}
-                      </button>
+                        style={{
+                          fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
+                          background: slot.streamType === 'AI_ANNOTATED' ? 'rgba(52,120,91,0.75)' : 'rgba(57,120,140,0.75)',
+                          color: '#fff', padding: '1px 6px', borderRadius: 2, letterSpacing: '0.06em',
+                          cursor: 'pointer', border: '1px solid rgba(255,255,255,0.15)',
+                          userSelect: 'none'
+                        }}>
+                        {slot.streamType === 'AI_ANNOTATED' ? 'AI' : 'RAW'}
+                      </span>
                       <button
-                        className="btn btn-danger btn-sm"
-                        style={{ fontSize: '10px', padding: '2px 5px' }}
                         onClick={() => closeSlotStream(index)}
+                        style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.65)', cursor: 'pointer', padding: '2px', display: 'flex', lineHeight: 1 }}
+                        title="Remove feed"
                       >
-                        Close
+                        <X size={12} />
                       </button>
                     </div>
                   </div>
 
-                  <div className="video-cell-screen" style={{ position: 'relative', overflow: 'hidden', backgroundColor: '#0f172a', width: '100%', height: '100%' }}>
-                    {currentState === 'LOADING' && (
+                  {/* VIDEO */}
+                  <div className="video-cell-screen">
+                    {(state === 'LOADING') && (
                       <div style={{
-                        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(2, 6, 23, 0.94)',
-                        zIndex: 10, padding: 16, textAlign: 'center'
+                        position: 'absolute', inset: 0, zIndex: 10, display: 'flex',
+                        flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(9,13,22,0.93)', color: 'var(--status-info)', gap: 8
                       }}>
-                        <div className="matrix-spinner" style={{
-                          width: 36, height: 36, borderRadius: '50%',
-                          border: '3px solid rgba(56, 189, 248, 0.2)', borderTopColor: '#38bdf8',
-                          animation: 'spin 0.8s linear infinite', marginBottom: 12
-                        }}></div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#38bdf8', letterSpacing: '0.5px' }}>
-                          LOADING LIVE VIDEO STREAM...
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#cbd5e1', marginTop: 4 }}>
-                          Connecting to {slot.camera.name} ({slot.camera.externalId})
-                        </div>
-                        <div className="mono" style={{ fontSize: '10px', color: '#64748b', marginTop: 6 }}>
-                          Protocol: {slot.streamType === 'AI_ANNOTATED' ? 'Sentinel AI Inference (YOLOv11+ANPR)' : 'Direct Raw RTSP (TCP)'}
-                        </div>
+                        <Activity size={22} style={{ animation: 'pulse 1.5s infinite' }} />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.07em' }}>INITIALIZING</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: '#687078' }}>{slot.camera.externalId}</span>
                       </div>
                     )}
-
-                    {currentState === 'RECONNECTING' && (
+                    {(state === 'RECONNECTING') && (
                       <div style={{
-                        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(2, 6, 23, 0.96)',
-                        zIndex: 10, padding: 16, textAlign: 'center'
+                        position: 'absolute', inset: 0, zIndex: 10, display: 'flex',
+                        flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(9,13,22,0.93)', color: 'var(--status-warning)', gap: 8
                       }}>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#f59e0b', marginBottom: 4 }}>
-                          ⚡ STREAM BUFFERING / RECONNECTING
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#cbd5e1' }}>
-                          Sentinel AI is connecting to RTSP endpoint for {slot.camera.name}...
-                        </div>
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          style={{ marginTop: 12, fontSize: '10.5px' }}
-                          onClick={() => setSlotStates((prev) => ({ ...prev, [index]: 'LOADING' }))}
-                        >
-                          🔄 Retry Stream Connection
+                        <AlertCircle size={22} />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.07em' }}>BUFFERING</span>
+                        <button className="btn btn-secondary" style={{ padding: '3px 8px', fontSize: '10px', marginTop: 4 }}
+                          onClick={() => setSlotStates((p) => ({ ...p, [index]: 'LOADING' }))}>
+                          RETRY
                         </button>
                       </div>
                     )}
-
                     <img
-                      key={`${slot.camera.id}-${slot.streamType}`}
-                      src={slot.streamType === 'RAW'
-                        ? `http://localhost:8000/api/v1/streams/${slot.camera.id}/raw_mjpeg`
-                        : `http://localhost:8000/api/v1/streams/${slot.camera.id}/mjpeg`
+                      key={`${slot.camera.id}-${slot.streamType}-${slot.session?.sessionId || 'loading'}`}
+                      src={
+                        slot.streamType === 'RAW'
+                          ? `http://localhost:8000/api/v1/streams/${slot.camera.id}/raw_mjpeg?session=${slot.session?.sessionId || ''}`
+                          : `http://localhost:8000/api/v1/streams/${slot.camera.id}/mjpeg?session=${slot.session?.sessionId || ''}`
                       }
-                      alt={`${slot.streamType} - ${slot.camera.name}`}
+                      alt={`${slot.streamType} feed`}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       onLoad={() => handleImageLoad(index)}
                       onError={() => handleImageError(index)}
                     />
                   </div>
+
+                  {/* OSD BOTTOM */}
+                  <div className="video-cell-footer">
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>
+                      {slot.camera.location || slot.camera.name}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: slot.streamType === 'AI_ANNOTATED' ? 'rgba(52,200,120,0.75)' : 'rgba(255,255,255,0.35)', display: 'flex', alignItems: 'center', gap: 3 }}>
+                      {slot.streamType === 'AI_ANNOTATED' && <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--status-success)', display: 'inline-block', animation: 'pulse 2s infinite' }} />}
+                      {slot.streamType === 'AI_ANNOTATED' ? 'SENTINEL AI' : 'RAW RTSP'}
+                    </span>
+                  </div>
                 </>
               ) : (
-                <div className="cell-empty-state" style={{ height: '100%', minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <div>Slot {index + 1} Available</div>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => openCameraPicker(index)}
-                  >
-                    + Add Camera Feed
-                  </button>
+                /* Empty slot */
+                <div className="cell-empty-state" onClick={() => openCameraPicker(index)}>
+                  <Video size={18} style={{ opacity: 0.35 }} />
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.08em', color: '#4A5568', textTransform: 'uppercase' }}>
+                    SLOT {String(index + 1).padStart(2, '0')}
+                  </div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 5, fontSize: '10px', fontWeight: 600,
+                    color: 'rgba(255,255,255,0.4)', border: '1px solid rgba(255,255,255,0.1)',
+                    padding: '3px 10px', borderRadius: 2
+                  }}>
+                    <Plus size={11} /> ADD FEED
+                  </div>
                 </div>
               )}
             </div>
@@ -332,77 +444,105 @@ export function LiveMatrix({ initialCamera = null }) {
         })}
       </div>
 
-      {/* Camera Selection Modal */}
+      {/* ── Camera Picker Modal ── */}
       {cameraPickerSlot !== null && (
         <div className="modal-backdrop">
-          <div className="modal-content" style={{ maxWidth: 640 }}>
-            <div className="modal-header">
-              <h3>Select Camera Feed for Slot {cameraPickerSlot + 1}</h3>
-              <button className="modal-close" onClick={() => setCameraPickerSlot(null)}>&times;</button>
+          <div className="system-modal" style={{ maxWidth: 680 }}>
+            {/* Dark header */}
+            <div className="modal-header" style={{ background: 'var(--structure-darker)', borderBottom: '2px solid var(--brand-terracotta)' }}>
+              <div>
+                <h3 style={{ color: '#fff', margin: 0, fontSize: '14px', letterSpacing: '0.04em' }}>
+                  ASSIGN CAMERA — SLOT {String(cameraPickerSlot + 1).padStart(2, '0')}
+                </h3>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#6B7A87', marginTop: 2 }}>
+                  Select a camera and stream type to connect
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setCameraPickerSlot(null)}><X size={18} /></button>
             </div>
-            <div className="modal-body">
-              <div className="filter-group" style={{ marginBottom: 12 }}>
+
+            <div className="modal-body" style={{ padding: '16px 20px' }}>
+              {/* Search */}
+              <div style={{ position: 'relative', marginBottom: 14 }}>
+                <SearchIcon size={14} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--text-muted)' }} />
                 <input
                   type="text"
-                  placeholder="Filter cameras by name, city, or external ID..."
+                  className="form-control"
+                  placeholder="Search by ID, name, or city…"
                   value={searchFilter}
                   onChange={(e) => setSearchFilter(e.target.value)}
-                  style={{ width: '100%' }}
+                  style={{ paddingLeft: 32, fontSize: '13px', width: '100%' }}
                 />
               </div>
 
               {loadingCameras ? (
-                <div>Loading authorized camera catalogue...</div>
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+                  LOADING CAMERA INDEX...
+                </div>
               ) : (
-                <div style={{ maxHeight: 350, overflowY: 'auto' }}>
-                  <table className="gov-table">
+                <div style={{ maxHeight: 380, overflowY: 'auto', borderRadius: 2, border: '1px solid var(--border-light)' }}>
+                  <table className="data-table">
                     <thead>
                       <tr>
                         <th>Camera ID</th>
-                        <th>Name</th>
-                        <th>City</th>
-                        <th>Dept</th>
-                        <th>Action</th>
+                        <th>Name / Location</th>
+                        <th>Status</th>
+                        <th style={{ textAlign: 'right' }}>Stream Type</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {availableCameras
-                        .filter((c) =>
-                          c.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
-                          c.city.toLowerCase().includes(searchFilter.toLowerCase()) ||
-                          c.externalId.toLowerCase().includes(searchFilter.toLowerCase())
-                        )
-                        .map((cam) => (
+                      {filteredCameras.length === 0 ? (
+                        <tr><td colSpan={4} style={{ textAlign: 'center', padding: '28px', color: 'var(--text-muted)' }}>No cameras found.</td></tr>
+                      ) : (
+                        filteredCameras.map((cam) => (
                           <tr key={cam.id}>
-                            <td className="mono">{cam.externalId}</td>
-                            <td><strong>{cam.name}</strong></td>
-                            <td>{cam.city}</td>
-                            <td>{cam.department}</td>
+                            <td className="mono" style={{ fontSize: '12px', fontWeight: 600 }}>{cam.externalId}</td>
                             <td>
-                              <div style={{ display: 'flex', gap: 4 }}>
+                              <div style={{ fontWeight: 500, fontSize: '13px' }}>{cam.name}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{cam.city}</div>
+                            </td>
+                            <td>
+                              <span style={{
+                                fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
+                                color: cam.status === 'ACTIVE' ? 'var(--status-success)' : 'var(--status-critical)',
+                                background: cam.status === 'ACTIVE' ? 'var(--status-success-bg)' : 'var(--status-critical-bg)',
+                                border: `1px solid ${cam.status === 'ACTIVE' ? 'rgba(52,120,91,0.3)' : 'rgba(201,54,43,0.3)'}`,
+                                padding: '1px 7px', borderRadius: 2
+                              }}>
+                                {cam.status}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                                 <button
-                                  className="btn btn-primary btn-sm"
-                                  onClick={() => openCameraInSlot(cameraPickerSlot, cam, 'AI_ANNOTATED')}
+                                  className="btn btn-primary"
+                                  style={{ padding: '4px 10px', fontSize: '11px' }}
+                                  onClick={() => handlePickerSelect(cam, 'AI_ANNOTATED')}
+                                  disabled={cam.status !== 'ACTIVE'}
                                 >
-                                  AI Stream
+                                  AI STREAM
                                 </button>
                                 <button
-                                  className="btn btn-secondary btn-sm"
-                                  onClick={() => openCameraInSlot(cameraPickerSlot, cam, 'RAW')}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '4px 10px', fontSize: '11px' }}
+                                  onClick={() => handlePickerSelect(cam, 'RAW')}
+                                  disabled={cam.status !== 'ACTIVE'}
                                 >
-                                  Raw
+                                  RAW RTSP
                                 </button>
                               </div>
                             </td>
                           </tr>
-                        ))}
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
               )}
             </div>
+
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setCameraPickerSlot(null)}>Cancel</button>
+              <button className="btn btn-secondary" onClick={() => setCameraPickerSlot(null)}>CANCEL</button>
             </div>
           </div>
         </div>

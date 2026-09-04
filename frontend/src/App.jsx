@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, Video, Map as MapIcon, Grid, Search, Eye, Bell, FolderKanban, ShieldAlert, Users, FileText, History, Settings, LogOut } from 'lucide-react';
 import { useAuth } from './contexts/AuthContext.jsx';
+import { useUI } from './contexts/UIContext.jsx';
+
 import { LoginPage } from './pages/LoginPage.jsx';
 import { Dashboard } from './pages/Dashboard.jsx';
 import { CamerasPage } from './pages/Cameras.jsx';
@@ -18,6 +21,7 @@ import { AdministrationPage } from './pages/AdministrationPage.jsx';
 
 export default function App() {
   const { user, loading, logout, isStateAdmin, isDeptHead } = useAuth();
+  const { showModal } = useUI();
   const [selectedLiveCamera, setSelectedLiveCamera] = useState(null);
   const navigate = useNavigate();
 
@@ -28,11 +32,12 @@ export default function App() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#0a192f',
+        backgroundColor: 'var(--structure-dark)',
         color: '#ffffff',
-        fontSize: '14px'
+        fontSize: '14px',
+        fontFamily: 'var(--font-mono)'
       }}>
-        Initializing Gujarat Government Video Intelligence Platform...
+        Initializing Sentinel Platform...
       </div>
     );
   }
@@ -46,21 +51,53 @@ export default function App() {
     navigate('/live');
   }
 
-  const navigationItems = [
-    { label: 'Dashboard', path: '/' },
-    { label: 'Cameras', path: '/cameras' },
-    { label: 'GIS Map', path: '/map' },
-    { label: 'Live Matrix', path: '/live' },
-    { label: 'Search', path: '/search' },
-    { label: 'Watchlists', path: '/watchlists' },
-    { label: 'Alerts', path: '/alerts' },
-    { label: 'Investigations', path: '/investigations' },
-    { label: 'Evidence Locker', path: '/evidence' },
-    { label: 'Access Sharing', path: '/access-requests' },
-    { label: 'Reports', path: '/reports' },
-    ...((isStateAdmin || isDeptHead) ? [{ label: 'Audit Trail', path: '/audit' }] : []),
-    ...((isStateAdmin || isDeptHead) ? [{ label: 'Administration', path: '/administration' }] : [])
+  function handleLogout() {
+    showModal({
+      title: 'End Session',
+      message: 'Are you sure you want to log out of the Sentinel platform?',
+      confirmText: 'Sign Out',
+      onConfirm: logout
+    });
+  }
+
+  const navGroups = [
+    {
+      title: 'COMMAND',
+      items: [
+        { label: 'Overview', path: '/', icon: <LayoutDashboard className="icon" /> },
+        { label: 'Live Operations', path: '/live', icon: <Grid className="icon" /> },
+        { label: 'GIS Intelligence', path: '/map', icon: <MapIcon className="icon" /> },
+      ]
+    },
+    {
+      title: 'INTELLIGENCE',
+      items: [
+        { label: 'ANPR Search', path: '/search', icon: <Search className="icon" /> },
+        { label: 'Alerts', path: '/alerts', icon: <Bell className="icon" /> },
+        { label: 'Watchlists', path: '/watchlists', icon: <Eye className="icon" /> },
+        { label: 'Investigations', path: '/investigations', icon: <FolderKanban className="icon" /> },
+        { label: 'Evidence Locker', path: '/evidence', icon: <ShieldAlert className="icon" /> },
+      ]
+    },
+    {
+      title: 'MANAGEMENT',
+      items: [
+        { label: 'Cameras', path: '/cameras', icon: <Video className="icon" /> },
+        { label: 'Access Sharing', path: '/access-requests', icon: <Users className="icon" /> },
+        { label: 'Reports', path: '/reports', icon: <FileText className="icon" /> },
+        ...((isStateAdmin || isDeptHead) ? [{ label: 'Audit Trail', path: '/audit', icon: <History className="icon" /> }] : [])
+      ]
+    }
   ];
+
+  if (isStateAdmin || isDeptHead) {
+    navGroups.push({
+      title: 'ADMINISTRATION',
+      items: [
+        { label: 'Users & Roles', path: '/administration', icon: <Settings className="icon" /> }
+      ]
+    });
+  }
 
   return (
     <div className="app-shell">
@@ -69,12 +106,16 @@ export default function App() {
         <div className="gov-branding">
           <div className="gov-emblem" aria-label="Gujarat State Emblem">GJ</div>
           <div className="gov-title-block">
-            <div className="state-title">GOVERNMENT OF GUJARAT</div>
-            <div className="portal-title">Centralized Video Intelligence & Surveillance Platform</div>
+            <div className="state-title">SENTINEL • GUJARAT POLICE</div>
+            <div className="portal-title">Video Intelligence & Surveillance Platform</div>
           </div>
         </div>
 
         <div className="gov-header-right">
+          <div className="system-status">
+            <div className="indicator"></div>
+            SYSTEM OPERATIONAL
+          </div>
           <div className="user-profile-badge">
             <span className="user-name">{user.displayName}</span>
             <span className="user-dept">
@@ -83,10 +124,8 @@ export default function App() {
             </span>
           </div>
 
-          <span className="env-tag">DEVELOPMENT</span>
-
-          <button className="btn-signout" onClick={logout} title="Sign out of current session">
-            Sign Out
+          <button className="btn btn-secondary" onClick={handleLogout} title="Sign out" style={{ padding: '8px', border: 'none', background: 'rgba(255,255,255,0.1)', color: '#fff' }}>
+            <LogOut size={16} />
           </button>
         </div>
       </header>
@@ -96,20 +135,26 @@ export default function App() {
         {/* Sidebar Navigation */}
         <aside className="sidebar">
           <nav className="sidebar-nav">
-            {navigationItems.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                end={item.path === '/'}
-              >
-                <span>{item.label}</span>
-              </NavLink>
+            {navGroups.map((group, i) => (
+              <div key={i} className="nav-group">
+                <div className="nav-group-title">{group.title}</div>
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === '/'}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
             ))}
           </nav>
 
           <div className="sidebar-footer">
-            <div>Scope: <strong>{user.cities?.length ? user.cities.join(', ') : 'Statewide (All)'}</strong></div>
-            <div style={{ fontSize: '10.5px', marginTop: 3 }}>Gov Gujarat Control Room Portal</div>
+            <div>Scope: <strong style={{ color: '#fff' }}>{user.cities?.length ? user.cities.join(', ') : 'Statewide (All)'}</strong></div>
+            <button onClick={handleLogout}><LogOut size={14} /> Sign Out</button>
           </div>
         </aside>
 
