@@ -56,6 +56,7 @@ export default function App() {
       title: 'End Session',
       message: 'Are you sure you want to log out of the Sentinel platform?',
       confirmText: 'Sign Out',
+      type: 'danger',
       onConfirm: logout
     });
   }

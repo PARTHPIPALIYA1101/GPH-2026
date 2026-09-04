@@ -1,7 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { CameraMap } from '../map/CameraMap.jsx';
 import { apiRequest } from '../services/api.js';
-import { Map as MapIcon, Search, Crosshair, Clock, MapPin, Video, Info } from 'lucide-react';
+import {
+  Map as MapIcon,
+  Search,
+  Crosshair,
+  Clock,
+  MapPin,
+  Video,
+  X,
+  AlertTriangle,
+  ChevronRight,
+} from 'lucide-react';
 import { useUI } from '../contexts/UIContext.jsx';
 
 export function MapPage({ onOpenLiveStream }) {
@@ -22,15 +32,18 @@ export function MapPage({ onOpenLiveStream }) {
 
     setLoading(true);
     try {
-      // Use existing search endpoint
       const res = await apiRequest(`/search?plate=${encodeURIComponent(searchQuery)}&limit=20`);
       if (res.success && res.data?.items?.length > 0) {
-        // Sort detections chronologically descending (newest first)
-        const history = res.data.items.sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt));
+        const history = res.data.items.sort(
+          (a, b) => new Date(b.detectedAt) - new Date(a.detectedAt)
+        );
         setTargetHistory(history);
         setTrackingPlate(searchQuery.toUpperCase());
         setIsTracking(true);
-        showToast(`Target acquired: ${history.length} sightings found for ${searchQuery.toUpperCase()}`, 'success');
+        showToast(
+          `Target acquired: ${history.length} sightings found for ${searchQuery.toUpperCase()}`,
+          'success'
+        );
       } else {
         showToast('No detection history found for this target.', 'warning');
         setIsTracking(false);
@@ -53,105 +66,192 @@ export function MapPage({ onOpenLiveStream }) {
   const latestDetection = targetHistory.length > 0 ? targetHistory[0] : null;
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div className="page-header">
-        <div>
-          <h1 className="flex items-center gap-2"><MapIcon size={24} style={{ color: 'var(--brand-terracotta)' }} /> GIS INTELLIGENCE</h1>
-          <p>Statewide camera map and active target tracking.</p>
+    <div className="gis-page-shell">
+      {/* ── Page Header ─────────────────────────────────────────────────── */}
+      <div className="gis-header">
+        <div className="gis-header-left">
+          <div className="gis-header-icon">
+            <MapIcon size={18} />
+          </div>
+          <div>
+            <h1 className="gis-title">GIS INTELLIGENCE</h1>
+            <p className="gis-subtitle">Statewide Camera Map &amp; Active Target Tracking</p>
+          </div>
         </div>
-        <div style={{ width: '400px' }}>
-          <form onSubmit={handleSearch} className="flex gap-2">
-            <div className="form-group flex-1" style={{ position: 'relative', margin: 0 }}>
-              <Search size={16} style={{ position: 'absolute', left: 12, top: 10, color: 'var(--text-muted)' }} />
+
+        <div className="gis-header-right">
+          {/* Target tracking search */}
+          <form onSubmit={handleSearch} className="gis-track-form">
+            <div className="gis-search-wrap">
+              <Search size={14} className="gis-search-icon" />
               <input
                 type="text"
-                className="form-control"
-                placeholder="Track Target (Plate No)..."
+                className="gis-search-input"
+                placeholder="Track Target — Plate No."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ width: '100%', paddingLeft: 36, textTransform: 'uppercase' }}
+                spellCheck={false}
               />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              <Crosshair size={16} /> TRACK
+            <button
+              type="submit"
+              className="btn btn-primary gis-track-btn"
+              disabled={loading}
+            >
+              <Crosshair size={14} />
+              {loading ? 'SEARCHING…' : 'TRACK'}
             </button>
+            {isTracking && (
+              <button
+                type="button"
+                className="btn btn-secondary gis-clear-btn"
+                onClick={stopTracking}
+                title="Stop tracking"
+              >
+                <X size={14} />
+              </button>
+            )}
           </form>
+
+          {/* Live tracking indicator */}
+          {isTracking && (
+            <div className="gis-active-indicator">
+              <span className="gis-active-dot" />
+              TRACKING ACTIVE
+            </div>
+          )}
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', gap: '24px', overflow: 'hidden' }}>
-        {/* Left Side: Map Area */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* ── Body: Map + Side Panel ───────────────────────────────────────── */}
+      <div className="gis-body">
+        {/* Map area */}
+        <div className="gis-map-area">
           <CameraMap onSelectCameraForLive={onOpenLiveStream} />
         </div>
 
-        {/* Right Side: Target Tracking Intelligence Workspace */}
+        {/* Target Intelligence Panel */}
         {isTracking && (
-          <div style={{ width: '380px', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border-light)', borderRadius: '2px', overflow: 'hidden' }}>
-            <div style={{ padding: '16px 20px', background: 'var(--structure-dark)', color: '#fff' }}>
-              <div className="flex justify-between items-center mb-1">
-                <span className="badge badge-critical" style={{ fontSize: '10px' }}><Crosshair size={10} style={{ marginRight: 4 }}/> ACTIVE TRACK</span>
-                <button onClick={stopTracking} style={{ background: 'none', border: 'none', color: '#fff', opacity: 0.5, cursor: 'pointer' }}>Close</button>
+          <aside className="gis-intel-panel">
+            {/* Panel header */}
+            <div className="gis-intel-header">
+              <div className="gis-intel-header-top">
+                <span className="badge badge-critical gis-track-badge">
+                  <Crosshair size={10} style={{ marginRight: 5 }} />
+                  ACTIVE TRACK
+                </span>
+                <button
+                  className="gis-intel-close"
+                  onClick={stopTracking}
+                  title="Stop tracking"
+                >
+                  <X size={14} />
+                </button>
               </div>
-              <h2 className="mono" style={{ color: '#fff', fontSize: '24px', margin: '4px 0' }}>{trackingPlate}</h2>
+              <div className="gis-intel-plate mono">{trackingPlate}</div>
               {latestDetection && (
-                <div style={{ fontSize: '12px', color: '#9BA3AB' }}>
+                <div className="gis-intel-vehicle">
                   {latestDetection.vehicleColor} {latestDetection.vehicleType}
                 </div>
               )}
             </div>
 
-            <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+            <div className="gis-intel-body">
+              {/* Latest Detection */}
               {latestDetection && (
-                <div className="mb-2">
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '8px' }}>LATEST INTELLIGENCE</div>
-                  <div style={{ padding: '12px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--border-light)', borderRadius: '2px' }}>
-                    <div className="flex items-center gap-2 mb-1" style={{ color: 'var(--status-info)' }}>
-                      <MapPin size={14} /> <strong>{latestDetection.cityName}</strong>
-                    </div>
-                    <div className="flex items-center gap-2 mb-1" style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                      <Video size={14} style={{ color: 'var(--text-secondary)' }} /> {latestDetection.cameraName}
-                    </div>
-                    <div className="flex items-center gap-2" style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                      <Clock size={14} style={{ color: 'var(--text-secondary)' }} /> {new Date(latestDetection.detectedAt).toLocaleString()}
-                    </div>
+                <section className="gis-intel-section">
+                  <div className="gis-section-label">LATEST INTELLIGENCE</div>
+
+                  <div className="gis-detection-card">
                     {latestDetection.isWatchlistMatch && (
-                      <div className="mt-1">
-                        <span className="badge badge-critical">WATCHLIST MATCH</span>
+                      <div className="gis-watchlist-alert">
+                        <AlertTriangle size={12} />
+                        WATCHLIST MATCH — HIGH PRIORITY
                       </div>
                     )}
+
+                    <div className="gis-detection-row">
+                      <MapPin size={13} className="gis-row-icon text-info" />
+                      <div>
+                        <div className="gis-row-label">Location</div>
+                        <div className="gis-row-value">{latestDetection.cityName}</div>
+                      </div>
+                    </div>
+
+                    <div className="gis-detection-row">
+                      <Video size={13} className="gis-row-icon" />
+                      <div>
+                        <div className="gis-row-label">Camera</div>
+                        <div className="gis-row-value">{latestDetection.cameraName}</div>
+                      </div>
+                    </div>
+
+                    <div className="gis-detection-row">
+                      <Clock size={13} className="gis-row-icon" />
+                      <div>
+                        <div className="gis-row-label">Detected At</div>
+                        <div className="gis-row-value mono" style={{ fontSize: 11 }}>
+                          {new Date(latestDetection.detectedAt).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="gis-detection-actions">
+                      <button className="btn btn-secondary" style={{ flex: 1, fontSize: 11, padding: '6px 10px' }}>
+                        OPEN INVESTIGATION
+                      </button>
+                      <button
+                        className="btn btn-primary"
+                        style={{ flex: 1, fontSize: 11, padding: '6px 10px' }}
+                        onClick={() => showToast('Connecting to live feed…', 'info')}
+                      >
+                        VIEW CAMERA
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-1 flex gap-2">
-                    <button className="btn btn-secondary" style={{ flex: 1, fontSize: '11px', padding: '6px' }}>OPEN INVESTIGATION</button>
-                    <button className="btn btn-primary" style={{ flex: 1, fontSize: '11px', padding: '6px' }} onClick={() => showToast('Connecting to live feed...', 'info')}>VIEW CAMERA</button>
-                  </div>
-                </div>
+                </section>
               )}
 
-              <div className="mt-2">
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '16px' }}>MOVEMENT TIMELINE</div>
+              {/* Movement Timeline */}
+              <section className="gis-intel-section">
+                <div className="gis-section-label">
+                  MOVEMENT TIMELINE
+                  <span className="gis-timeline-count">{targetHistory.length}</span>
+                </div>
+
                 <div className="timeline">
                   {targetHistory.map((event, idx) => (
-                    <div key={event.id} className="timeline-event" style={{ opacity: idx === 0 ? 1 : 0.7 }}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div style={{ fontSize: '12px', fontWeight: 600 }}>{event.cameraName}</div>
-                        <div className="mono text-secondary" style={{ fontSize: '11px' }}>{new Date(event.detectedAt).toLocaleTimeString()}</div>
-                      </div>
-                      <div className="flex items-center gap-1" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                        <MapPin size={10} /> {event.cityName}
-                        {idx === 0 && <span className="badge badge-info" style={{ padding: '0px 4px', fontSize: '9px', marginLeft: '6px' }}>LATEST</span>}
-                      </div>
-                      {event.isWatchlistMatch && (
-                        <div style={{ marginTop: 4 }}>
-                          <span className="badge badge-critical" style={{ padding: '0px 4px', fontSize: '9px' }}>ALERT</span>
+                    <div
+                      key={event.id}
+                      className="timeline-event gis-timeline-event"
+                      style={{ opacity: idx === 0 ? 1 : 0.72 }}
+                    >
+                      <div className="gis-tl-row">
+                        <div className="gis-tl-camera">{event.cameraName}</div>
+                        <div className="mono gis-tl-time">
+                          {new Date(event.detectedAt).toLocaleTimeString()}
                         </div>
-                      )}
+                      </div>
+                      <div className="gis-tl-meta">
+                        <MapPin size={10} style={{ flexShrink: 0 }} />
+                        <span>{event.cityName}</span>
+                        {idx === 0 && (
+                          <span className="badge badge-info" style={{ padding: '1px 5px', fontSize: '9px' }}>
+                            LATEST
+                          </span>
+                        )}
+                        {event.isWatchlistMatch && (
+                          <span className="badge badge-critical" style={{ padding: '1px 5px', fontSize: '9px' }}>
+                            ALERT
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
-              </div>
+              </section>
             </div>
-          </div>
+          </aside>
         )}
       </div>
     </div>
