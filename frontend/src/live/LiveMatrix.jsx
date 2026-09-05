@@ -446,85 +446,90 @@ export function LiveMatrix({ initialCamera = null }) {
 
       {/* ── Camera Picker Modal ── */}
       {cameraPickerSlot !== null && (
-        <div className="modal-backdrop">
-          <div className="system-modal" style={{ maxWidth: 680 }}>
+        <div className="modal-backdrop" style={{ background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(6px)' }}>
+          <div className="modal-content system-modal assign-camera-modal" style={{ maxWidth: 680, background: '#FFFDF8', border: '1px solid #D1CEC5', borderRadius: 4, overflow: 'hidden', boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)' }}>
             {/* Dark header */}
-            <div className="modal-header" style={{ background: 'var(--structure-darker)', borderBottom: '2px solid var(--brand-terracotta)' }}>
+            <div className="modal-header" style={{ background: '#0F172A', borderBottom: '2px solid #E58A24', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h3 style={{ color: '#fff', margin: 0, fontSize: '14px', letterSpacing: '0.04em' }}>
+                <h3 style={{ color: '#F8FAFC', margin: 0, fontSize: '14px', fontWeight: 700, letterSpacing: '0.04em' }}>
                   ASSIGN CAMERA — SLOT {String(cameraPickerSlot + 1).padStart(2, '0')}
                 </h3>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#6B7A87', marginTop: 2 }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#94A3B8', marginTop: 2 }}>
                   Select a camera and stream type to connect
                 </div>
               </div>
-              <button className="modal-close" onClick={() => setCameraPickerSlot(null)}><X size={18} /></button>
+              <button className="modal-close" onClick={() => setCameraPickerSlot(null)} style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <X size={18} />
+              </button>
             </div>
 
-            <div className="modal-body" style={{ padding: '16px 20px' }}>
+            {/* Light body */}
+            <div className="modal-body" style={{ padding: '16px 20px', background: '#FFFDF8' }}>
               {/* Search */}
               <div style={{ position: 'relative', marginBottom: 14 }}>
-                <SearchIcon size={14} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--text-muted)' }} />
+                <SearchIcon size={14} style={{ position: 'absolute', left: 12, top: 11, color: '#687078' }} />
                 <input
                   type="text"
-                  className="form-control"
                   placeholder="Search by ID, name, or city…"
                   value={searchFilter}
                   onChange={(e) => setSearchFilter(e.target.value)}
-                  style={{ paddingLeft: 32, fontSize: '13px', width: '100%' }}
+                  style={{ paddingLeft: 34, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: '13px', width: '100%', background: '#FFFFFF', border: '1px solid #D1CEC5', color: '#171A1C', borderRadius: 3, outline: 'none' }}
                 />
               </div>
 
               {loadingCameras ? (
-                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
+                <div style={{ padding: 40, textAlign: 'center', color: '#687078', fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
                   LOADING CAMERA INDEX...
                 </div>
               ) : (
-                <div style={{ maxHeight: 380, overflowY: 'auto', borderRadius: 2, border: '1px solid var(--border-light)' }}>
-                  <table className="data-table">
+                <div style={{ maxHeight: 380, overflowY: 'auto', borderRadius: 3, border: '1px solid #D1CEC5', background: '#FFFFFF' }}>
+                  <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                      <tr>
-                        <th>Camera ID</th>
-                        <th>Name / Location</th>
-                        <th>Status</th>
-                        <th style={{ textAlign: 'right' }}>Stream Type</th>
+                      <tr style={{ background: '#F4F1EA', borderBottom: '1px solid #D1CEC5' }}>
+                        <th style={{ color: '#687078', padding: '10px 12px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em' }}>Camera ID</th>
+                        <th style={{ color: '#687078', padding: '10px 12px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em' }}>Name / Location</th>
+                        <th style={{ color: '#687078', padding: '10px 12px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em' }}>Status</th>
+                        <th style={{ color: '#687078', padding: '10px 12px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', textAlign: 'right' }}>Stream Type</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredCameras.length === 0 ? (
-                        <tr><td colSpan={4} style={{ textAlign: 'center', padding: '28px', color: 'var(--text-muted)' }}>No cameras found.</td></tr>
+                        <tr><td colSpan={4} style={{ textAlign: 'center', padding: '28px', color: '#687078' }}>No cameras found.</td></tr>
                       ) : (
                         filteredCameras.map((cam) => (
-                          <tr key={cam.id}>
-                            <td className="mono" style={{ fontSize: '12px', fontWeight: 600 }}>{cam.externalId}</td>
-                            <td>
-                              <div style={{ fontWeight: 500, fontSize: '13px' }}>{cam.name}</div>
-                              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{cam.city}</div>
+                          <tr
+                            key={cam.id}
+                            style={{ borderBottom: '1px solid #E0DDD5', background: '#FFFFFF', transition: 'background 0.15s ease' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = '#F0EDE5'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; }}
+                          >
+                            <td className="mono" style={{ fontSize: '12px', fontWeight: 700, color: '#E58A24', padding: '10px 12px' }}>{cam.externalId}</td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <div style={{ fontWeight: 600, fontSize: '13px', color: '#171A1C' }}>{cam.name}</div>
+                              <div style={{ fontSize: '11px', color: '#687078' }}>{cam.city}</div>
                             </td>
-                            <td>
+                            <td style={{ padding: '10px 12px' }}>
                               <span style={{
                                 fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
-                                color: cam.status === 'ACTIVE' ? 'var(--status-success)' : 'var(--status-critical)',
-                                background: cam.status === 'ACTIVE' ? 'var(--status-success-bg)' : 'var(--status-critical-bg)',
+                                color: cam.status === 'ACTIVE' ? '#34785B' : '#C9362B',
+                                background: cam.status === 'ACTIVE' ? 'rgba(52,120,91,0.1)' : 'rgba(201,54,43,0.1)',
                                 border: `1px solid ${cam.status === 'ACTIVE' ? 'rgba(52,120,91,0.3)' : 'rgba(201,54,43,0.3)'}`,
-                                padding: '1px 7px', borderRadius: 2
+                                padding: '2px 7px', borderRadius: 2
                               }}>
                                 {cam.status}
                               </span>
                             </td>
-                            <td style={{ textAlign: 'right' }}>
+                            <td style={{ textAlign: 'right', padding: '10px 12px' }}>
                               <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                                 <button
-                                  className="btn btn-primary"
-                                  style={{ padding: '4px 10px', fontSize: '11px' }}
+                                  style={{ padding: '6px 14px', fontSize: '11px', fontWeight: 600, background: '#B54A2A', border: 'none', color: '#ffffff', borderRadius: 2, cursor: cam.status === 'ACTIVE' ? 'pointer' : 'not-allowed', opacity: cam.status === 'ACTIVE' ? 1 : 0.5 }}
                                   onClick={() => handlePickerSelect(cam, 'AI_ANNOTATED')}
                                   disabled={cam.status !== 'ACTIVE'}
                                 >
                                   AI STREAM
                                 </button>
                                 <button
-                                  className="btn btn-secondary"
-                                  style={{ padding: '4px 10px', fontSize: '11px' }}
+                                  style={{ padding: '6px 14px', fontSize: '11px', fontWeight: 600, background: '#334155', border: '1px solid #475569', color: '#FFFFFF', borderRadius: 2, cursor: cam.status === 'ACTIVE' ? 'pointer' : 'not-allowed', opacity: cam.status === 'ACTIVE' ? 1 : 0.5 }}
                                   onClick={() => handlePickerSelect(cam, 'RAW')}
                                   disabled={cam.status !== 'ACTIVE'}
                                 >
@@ -541,8 +546,9 @@ export function LiveMatrix({ initialCamera = null }) {
               )}
             </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setCameraPickerSlot(null)}>CANCEL</button>
+            {/* Light footer */}
+            <div className="modal-footer" style={{ background: '#F4F1EA', borderTop: '1px solid #D1CEC5', padding: '16px 20px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" style={{ background: '#FFFFFF', border: '1px solid #D1CEC5', color: '#171A1C', padding: '6px 16px', fontSize: '11px', fontWeight: 600, borderRadius: 2, cursor: 'pointer' }} onClick={() => setCameraPickerSlot(null)}>CANCEL</button>
             </div>
           </div>
         </div>
