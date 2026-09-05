@@ -5,8 +5,9 @@ import { useUI } from '../contexts/UIContext.jsx';
 import {
   Video, Wifi, WifiOff, Activity, Search, Plus, Filter,
   MapPin, Shield, Zap, ExternalLink, ChevronLeft, ChevronRight,
-  AlertTriangle, X, Clock, CheckCircle, Radio
+  AlertTriangle, X, Clock, CheckCircle, Radio, Film, FolderOpen
 } from 'lucide-react';
+import { DemoVideoPlayer } from '../components/DemoVideoPlayer.jsx';
 
 // ─── Status helpers ────────────────────────────────────────────────────────────
 const STATUS_COLOR = {
@@ -69,10 +70,10 @@ function KpiBlock({ icon, label, value, accentColor }) {
 }
 
 // ─── Camera Grid Card ──────────────────────────────────────────────────────────
-function CameraCard({ cam, selected, onClick }) {
+function CameraCard({ cam, selected, onClick, isDemoMode }) {
   const isOnline = cam.status === 'ACTIVE';
   const isOffline = cam.status === 'OFFLINE';
-  const stripeColor = STATUS_COLOR[cam.status] || 'var(--border-medium)';
+  const stripeColor = isDemoMode ? 'var(--accent-saffron)' : (STATUS_COLOR[cam.status] || 'var(--border-medium)');
   return (
     <div
       onClick={onClick}
@@ -92,10 +93,33 @@ function CameraCard({ cam, selected, onClick }) {
       {/* Top: status + AI indicator */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <StatusDot status={cam.status} />
-          <StatusPill status={cam.status} />
+          {isDemoMode ? (
+            <span style={{
+              fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 800,
+              background: 'rgba(229, 138, 36, 0.12)', color: 'var(--accent-saffron)',
+              border: '1px solid rgba(229, 138, 36, 0.4)', padding: '2px 8px', borderRadius: 2,
+              letterSpacing: '0.06em', whiteSpace: 'nowrap'
+            }}>
+              DEMO FEED
+            </span>
+          ) : (
+            <>
+              <StatusDot status={cam.status} />
+              <StatusPill status={cam.status} />
+            </>
+          )}
         </div>
-        {cam.aiStatus === 'PROCESSING' && (
+        {isDemoMode ? (
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
+            color: 'var(--accent-saffron)', background: 'rgba(229,138,36,0.1)',
+            border: '1px solid rgba(229,138,36,0.3)', padding: '1px 6px', borderRadius: 2,
+            display: 'flex', alignItems: 'center', gap: 4
+          }}>
+            <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--accent-saffron)', animation: 'pulse 1.5s infinite' }} />
+            AI MODEL OP
+          </span>
+        ) : cam.aiStatus === 'PROCESSING' && (
           <span style={{
             fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
             color: 'var(--status-success)', background: 'var(--status-success-bg)',
@@ -152,12 +176,58 @@ function CameraCard({ cam, selected, onClick }) {
 }
 
 // ─── Camera Detail Panel ───────────────────────────────────────────────────────
-function CameraDetail({ cam, onOpenLiveStream, onStartAI, onDelete, onRequestAccess, user, isStateAdmin, isDeptHead }) {
+function CameraDetail({
+  cam,
+  onOpenLiveStream,
+  onStartAI,
+  onDelete,
+  onRequestAccess,
+  user,
+  isStateAdmin,
+  isDeptHead,
+  isDemoMode,
+  onToggleDemoMode,
+  demoSource,
+  demoSourceName,
+  onSelectDemoSource,
+  onSelectLocalFile
+}) {
   if (!cam) {
+    if (isDemoMode) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 20, gap: 14 }}>
+          <div style={{
+            fontSize: '11px',
+            fontWeight: 700,
+            color: 'var(--accent-saffron)',
+            letterSpacing: '0.07em',
+            textTransform: 'uppercase'
+          }}>
+            STANDALONE DEMO VIDEO FEED
+          </div>
+          <DemoVideoPlayer
+            camera={{ name: 'Command Center Demo Feed', externalId: 'GJ-DEMO-SIM', location: 'Gujarat State Command Center' }}
+            isDemoMode={isDemoMode}
+            onToggleDemoMode={onToggleDemoMode}
+            currentSource={demoSource}
+            sourceName={demoSourceName}
+            onSelectSource={onSelectDemoSource}
+            onSelectLocalFile={onSelectLocalFile}
+          />
+        </div>
+      );
+    }
     return (
       <div className="empty-state" style={{ flex: 1 }}>
         <Video size={40} className="empty-state-icon" />
         <div className="empty-state-title">Select a camera from the grid to view intelligence.</div>
+        <button
+          className="btn btn-secondary"
+          onClick={() => onToggleDemoMode(true)}
+          style={{ marginTop: 14, fontSize: '12px', display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <Film size={14} /> Launch Demo Video Feed
+        </button>
       </div>
     );
   }
@@ -204,10 +274,36 @@ function CameraDetail({ cam, onOpenLiveStream, onStartAI, onDelete, onRequestAcc
       <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
 
         {/* Viewport / Stream */}
-        {isOnline ? (
+        {isDemoMode ? (
           <section>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
-              Live Stream Preview
+            <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-saffron)', letterSpacing: '0.07em', marginBottom: 8, textTransform: 'uppercase' }}>
+              Local Demo Video Feed
+            </div>
+            <DemoVideoPlayer
+              camera={cam}
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={onToggleDemoMode}
+              currentSource={demoSource}
+              sourceName={demoSourceName}
+              onSelectSource={onSelectDemoSource}
+              onSelectLocalFile={onSelectLocalFile}
+            />
+          </section>
+        ) : isOnline ? (
+          <section>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
+                Live Stream Preview
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onToggleDemoMode(true)}
+                style={{ padding: '2px 8px', fontSize: '10px', display: 'flex', alignItems: 'center', gap: 4 }}
+                title="Switch preview to local demo video"
+              >
+                <Film size={11} /> Demo Mode
+              </button>
             </div>
             <div style={{
               background: 'var(--structure-dark)', position: 'relative',
@@ -243,16 +339,27 @@ function CameraDetail({ cam, onOpenLiveStream, onStartAI, onDelete, onRequestAcc
             </div>
             <div style={{
               background: 'var(--status-critical-bg)', border: '1px solid rgba(201,54,43,0.3)',
-              padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, borderRadius: 2
+              padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderRadius: 2
             }}>
-              <WifiOff size={18} style={{ color: 'var(--status-critical)', flexShrink: 0 }} />
-              <div>
-                <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--status-critical)' }}>STREAM UNAVAILABLE</div>
-                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: 2 }}>
-                  Status: {cam.status}
-                  {cam.lastSeenAt && <span> · Last active: {new Date(cam.lastSeenAt).toLocaleString('en-IN')}</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <WifiOff size={18} style={{ color: 'var(--status-critical)', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--status-critical)' }}>STREAM UNAVAILABLE</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: 2 }}>
+                    Status: {cam.status}
+                    {cam.lastSeenAt && <span> · Last active: {new Date(cam.lastSeenAt).toLocaleString('en-IN')}</span>}
+                  </div>
                 </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => onToggleDemoMode(true)}
+                style={{ fontSize: '11px', padding: '5px 10px', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5 }}
+                title="Play local demo video instead"
+              >
+                <Film size={12} /> Play Demo
+              </button>
             </div>
           </section>
         )}
@@ -291,6 +398,22 @@ function CameraDetail({ cam, onOpenLiveStream, onStartAI, onDelete, onRequestAcc
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button
+              type="button"
+              className={`btn ${isDemoMode ? 'btn-secondary' : 'btn-primary'}`}
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                borderColor: isDemoMode ? 'var(--border-medium)' : 'var(--accent-saffron)',
+                background: isDemoMode ? 'transparent' : 'rgba(229, 138, 36, 0.12)',
+                color: isDemoMode ? 'var(--text-secondary)' : 'var(--accent-saffron)'
+              }}
+              onClick={() => onToggleDemoMode(!isDemoMode)}
+            >
+              <Film size={14} />
+              {isDemoMode ? 'RETURN TO REAL CCTV STREAM' : 'TRANSFER TO DEMO VIDEO'}
+            </button>
+
             {isOnline && (
               <button
                 className="btn btn-primary"
@@ -509,6 +632,60 @@ export function CamerasPage({ onOpenLiveStream }) {
   });
   const [accessForm, setAccessForm] = useState({ duration: 'TEMPORARY', reason: '', expiresAt: '' });
 
+  // ─── Demo Video Mode State ──────────────────────────────────────────────────
+  const [isDemoMode, setIsDemoMode] = useState(() => {
+    try {
+      return localStorage.getItem('gov_camera_demo_mode') === 'true';
+    } catch { return false; }
+  });
+  const [demoSource, setDemoSource] = useState(() => {
+    try {
+      return localStorage.getItem('gov_camera_demo_source') || '/demovideo/v2.mp4';
+    } catch { return '/demovideo/v2.mp4'; }
+  });
+  const [demoSourceName, setDemoSourceName] = useState(() => {
+    try {
+      return localStorage.getItem('gov_camera_demo_name') || 'v2.mp4';
+    } catch { return 'v2.mp4'; }
+  });
+
+  function handleToggleDemoMode(forceState) {
+    const next = typeof forceState === 'boolean' ? forceState : !isDemoMode;
+    setIsDemoMode(next);
+    try { localStorage.setItem('gov_camera_demo_mode', String(next)); } catch {}
+    if (next) {
+      showToast('Demo Video Mode enabled. Transferred to local video feed.', 'success');
+      if (!selectedCamera && cameras.length > 0) {
+        setSelectedCamera(cameras[0]);
+      }
+    } else {
+      showToast('Returned to real CCTV surveillance streams.', 'info');
+    }
+  }
+
+  function handleSelectDemoSource(url) {
+    setDemoSource(url);
+    const name = url.split('/').pop();
+    setDemoSourceName(name);
+    try {
+      localStorage.setItem('gov_camera_demo_source', url);
+      localStorage.setItem('gov_camera_demo_name', name);
+    } catch {}
+    showToast(`Transferred demo feed to ${name}`, 'info');
+  }
+
+  function handleSelectLocalFile(file) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setDemoSource(url);
+    const name = `Storage: ${file.name}`;
+    setDemoSourceName(name);
+    try {
+      localStorage.setItem('gov_camera_demo_name', name);
+    } catch {}
+    showToast(`Loaded storage file: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`, 'success');
+  }
+
   useEffect(() => { loadLookups(); }, []);
   useEffect(() => { loadCameras(); }, [page, selectedCity, selectedDept, selectedStatus, searchQuery]);
 
@@ -661,147 +838,225 @@ export function CamerasPage({ onOpenLiveStream }) {
       <div className="page-header">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <Radio size={13} style={{ color: 'var(--status-success)' }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: 'var(--status-success)', letterSpacing: '0.08em' }}>
-              {onlineCount} CAMERAS STREAMING
+            <Radio size={13} style={{ color: isDemoMode ? 'var(--accent-saffron)' : 'var(--status-success)' }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, color: isDemoMode ? 'var(--accent-saffron)' : 'var(--status-success)', letterSpacing: '0.08em' }}>
+              {isDemoMode ? 'LOCAL DEMO VIDEO ACTIVE · FULLSCREEN VIEW' : `${onlineCount} CAMERAS STREAMING`}
             </span>
           </div>
-          <h1>CCTV SURVEILLANCE CENTER</h1>
+          <h1>{isDemoMode ? 'DEMO SURVEILLANCE & AI PIPELINE' : 'CCTV SURVEILLANCE CENTER'}</h1>
           <p>
-            Statewide video surveillance asset management · AI inference monitoring · Access control
+            {isDemoMode
+              ? 'Local surveillance test feed running real PyTorch YOLO11 + license plate finetuned model inference (Real cameras hidden)'
+              : 'Statewide video surveillance asset management · AI inference monitoring · Access control'}
           </p>
         </div>
-        {(isStateAdmin || isDeptHead) && (
-          <button className="btn btn-primary" onClick={openRegisterModal}>
-            <Plus size={14} /> REGISTER CAMERA
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Demo Mode Toggle Button */}
+          <button
+            type="button"
+            className={`btn ${isDemoMode ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => handleToggleDemoMode()}
+            style={{
+              padding: '8px 16px',
+              fontSize: '12px',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              border: isDemoMode ? '1px solid #ef4444' : '1px solid var(--accent-saffron)',
+              background: isDemoMode ? 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)' : 'var(--bg-surface)',
+              color: isDemoMode ? '#fff' : 'var(--text-primary)',
+              boxShadow: isDemoMode ? '0 0 14px rgba(220, 38, 38, 0.45)' : 'none'
+            }}
+            title={isDemoMode ? 'Exit Demo Mode and restore all real cameras' : 'Switch to Demo Video with real PyTorch AI model'}
+          >
+            {isDemoMode ? (
+              <>
+                <X size={15} />
+                <span>EXIT DEMO & SHOW REAL CAMERAS</span>
+              </>
+            ) : (
+              <>
+                <Film size={15} />
+                <span>DEMO VIDEO</span>
+                <span style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#64748b'
+                }} />
+              </>
+            )}
           </button>
-        )}
+
+          {!isDemoMode && (isStateAdmin || isDeptHead) && (
+            <button className="btn btn-primary" onClick={openRegisterModal}>
+              <Plus size={14} /> REGISTER CAMERA
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* ── KPI STRIP ───────────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-        <KpiBlock icon={<Video size={18} />} label="Total (This Page)" value={cameras.length} accentColor="var(--status-info)" />
-        <KpiBlock icon={<Wifi size={18} />} label="Online" value={onlineCount} accentColor="var(--status-success)" />
-        <KpiBlock icon={<WifiOff size={18} />} label="Offline / Degraded" value={offlineCount + degradedCount} accentColor={offlineCount > 0 ? 'var(--status-critical)' : 'var(--border-medium)'} />
-        <KpiBlock icon={<Activity size={18} />} label="AI Processing" value={aiCount} accentColor="var(--accent-saffron)" />
-      </div>
-
-      {/* ── FILTER BAR ──────────────────────────────────────────────────────── */}
-      <div style={{
-        background: 'var(--bg-surface)', border: '1px solid var(--border-light)',
-        padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap'
-      }}>
-        <Filter size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-        <div style={{ position: 'relative', flex: 1, minWidth: 180 }}>
-          <Search size={13} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--text-muted)' }} />
-          <input
-            type="text"
-            className="form-control"
-            placeholder="Search ID, name, location…"
-            value={searchQuery}
-            onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
-            style={{ paddingLeft: 32, fontSize: '13px', minWidth: 0, width: '100%' }}
+      {/* ── CONTENT: Full-Screen Demo Mode OR Standard Real Cameras View ── */}
+      {isDemoMode ? (
+        <div style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-light)',
+          borderRadius: 2,
+          padding: 16,
+          overflowY: 'auto'
+        }}>
+          <DemoVideoPlayer
+            camera={{ name: 'Command Center Demo Feed', externalId: 'GJ-DEMO-SIM', location: 'Gujarat State Command Center' }}
+            isDemoMode={isDemoMode}
+            onToggleDemoMode={handleToggleDemoMode}
+            currentSource={demoSource}
+            sourceName={demoSourceName}
+            onSelectSource={handleSelectDemoSource}
+            onSelectLocalFile={handleSelectLocalFile}
+            fullScreenView={true}
           />
         </div>
-        <select className="form-control" value={selectedCity}
-          onChange={e => { setSelectedCity(e.target.value); setPage(0); }}
-          style={{ fontSize: '12px', minWidth: 130 }}>
-          <option value="">All Cities</option>
-          {cities.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-        </select>
-        <select className="form-control" value={selectedDept}
-          onChange={e => { setSelectedDept(e.target.value); setPage(0); }}
-          style={{ fontSize: '12px', minWidth: 140 }}>
-          <option value="">All Departments</option>
-          {departments.map(d => <option key={d.id} value={d.id}>{d.code}</option>)}
-        </select>
-        <select className="form-control" value={selectedStatus}
-          onChange={e => { setSelectedStatus(e.target.value); setPage(0); }}
-          style={{ fontSize: '12px', minWidth: 130 }}>
-          <option value="">All Statuses</option>
-          <option value="ACTIVE">ACTIVE</option>
-          <option value="OFFLINE">OFFLINE</option>
-          <option value="DEGRADED">DEGRADED</option>
-          <option value="CONNECTING">CONNECTING</option>
-        </select>
-        {(selectedCity || selectedDept || selectedStatus || searchQuery) && (
-          <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '6px 10px', whiteSpace: 'nowrap' }}
-            onClick={() => { setSelectedCity(''); setSelectedDept(''); setSelectedStatus(''); setSearchQuery(''); setPage(0); }}>
-            <X size={12} /> Clear
-          </button>
-        )}
-      </div>
+      ) : (
+        <>
+          {/* ── KPI STRIP ───────────────────────────────────────────────────────── */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+            <KpiBlock icon={<Video size={18} />} label="Total (This Page)" value={cameras.length} accentColor="var(--status-info)" />
+            <KpiBlock icon={<Wifi size={18} />} label="Online" value={onlineCount} accentColor="var(--status-success)" />
+            <KpiBlock icon={<WifiOff size={18} />} label="Offline / Degraded" value={offlineCount + degradedCount} accentColor={offlineCount > 0 ? 'var(--status-critical)' : 'var(--border-medium)'} />
+            <KpiBlock icon={<Activity size={18} />} label="AI Processing" value={aiCount} accentColor="var(--accent-saffron)" />
+          </div>
 
-      {/* ── MAIN SPLIT: Grid | Detail ────────────────────────────────────────── */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 360px', gap: 0,
-        border: '1px solid var(--border-light)', flex: 1, minHeight: 0, overflow: 'hidden'
-      }}>
-
-        {/* LEFT: Camera Grid */}
-        <div style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-light)', overflow: 'hidden' }}>
+          {/* ── FILTER BAR ──────────────────────────────────────────────────────── */}
           <div style={{
-            padding: '10px 14px', borderBottom: '1px solid var(--border-light)',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            background: 'rgba(0,0,0,0.01)', flexShrink: 0
+            background: 'var(--bg-surface)', border: '1px solid var(--border-light)',
+            padding: '12px 16px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap'
           }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)' }}>
-              {loading ? 'Loading…' : `${cameras.length} cameras · ${total} total`}
-            </span>
-            {totalPages > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)' }}>
-                  PAGE {page + 1}/{totalPages}
+            <Filter size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+            <div style={{ position: 'relative', flex: 1, minWidth: 180 }}>
+              <Search size={13} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search ID, name, location…"
+                value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); setPage(0); }}
+                style={{ paddingLeft: 32, fontSize: '13px', minWidth: 0, width: '100%' }}
+              />
+            </div>
+            <select className="form-control" value={selectedCity}
+              onChange={e => { setSelectedCity(e.target.value); setPage(0); }}
+              style={{ fontSize: '12px', minWidth: 130 }}>
+              <option value="">All Cities</option>
+              {cities.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+            </select>
+            <select className="form-control" value={selectedDept}
+              onChange={e => { setSelectedDept(e.target.value); setPage(0); }}
+              style={{ fontSize: '12px', minWidth: 140 }}>
+              <option value="">All Departments</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.code}</option>)}
+            </select>
+            <select className="form-control" value={selectedStatus}
+              onChange={e => { setSelectedStatus(e.target.value); setPage(0); }}
+              style={{ fontSize: '12px', minWidth: 130 }}>
+              <option value="">All Statuses</option>
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="OFFLINE">OFFLINE</option>
+              <option value="DEGRADED">DEGRADED</option>
+              <option value="CONNECTING">CONNECTING</option>
+            </select>
+            {(selectedCity || selectedDept || selectedStatus || searchQuery) && (
+              <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '6px 10px', whiteSpace: 'nowrap' }}
+                onClick={() => { setSelectedCity(''); setSelectedDept(''); setSelectedStatus(''); setSearchQuery(''); setPage(0); }}>
+                <X size={12} /> Clear
+              </button>
+            )}
+          </div>
+
+          {/* ── MAIN SPLIT: Grid | Detail ────────────────────────────────────────── */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 360px', gap: 0,
+            border: '1px solid var(--border-light)', flex: 1, minHeight: 0, overflow: 'hidden'
+          }}>
+
+            {/* LEFT: Camera Grid */}
+            <div style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border-light)', overflow: 'hidden' }}>
+              <div style={{
+                padding: '10px 14px', borderBottom: '1px solid var(--border-light)',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                background: 'rgba(0,0,0,0.01)', flexShrink: 0
+              }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  {loading ? 'Loading…' : `${cameras.length} cameras · ${total} total`}
                 </span>
-                <button className="btn btn-secondary" disabled={page === 0}
-                  onClick={() => setPage(p => Math.max(0, p - 1))}
-                  style={{ padding: '3px 7px', fontSize: '11px' }}>
-                  <ChevronLeft size={13} />
-                </button>
-                <button className="btn btn-secondary" disabled={page >= totalPages - 1}
-                  onClick={() => setPage(p => p + 1)}
-                  style={{ padding: '3px 7px', fontSize: '11px' }}>
-                  <ChevronRight size={13} />
-                </button>
+                {totalPages > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)' }}>
+                      PAGE {page + 1}/{totalPages}
+                    </span>
+                    <button className="btn btn-secondary" disabled={page === 0}
+                      onClick={() => setPage(p => Math.max(0, p - 1))}
+                      style={{ padding: '3px 7px', fontSize: '11px' }}>
+                      <ChevronLeft size={13} />
+                    </button>
+                    <button className="btn btn-secondary" disabled={page >= totalPages - 1}
+                      onClick={() => setPage(p => p + 1)}
+                      style={{ padding: '3px 7px', fontSize: '11px' }}>
+                      <ChevronRight size={13} />
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-            {loading ? (
-              <div className="empty-state">Loading surveillance assets…</div>
-            ) : cameras.length === 0 ? (
-              <div className="empty-state">
-                <Video size={28} className="empty-state-icon" />
-                <div className="empty-state-title">No cameras match your current filters.</div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+                {loading ? (
+                  <div className="empty-state">Loading surveillance assets…</div>
+                ) : cameras.length === 0 ? (
+                  <div className="empty-state">
+                    <Video size={28} className="empty-state-icon" />
+                    <div className="empty-state-title">No cameras match your current filters.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+                    {cameras.map(cam => (
+                      <CameraCard
+                        key={cam.id}
+                        cam={cam}
+                        selected={selectedCamera?.id === cam.id}
+                        onClick={() => setSelectedCamera(cam)}
+                        isDemoMode={isDemoMode}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-                {cameras.map(cam => (
-                  <CameraCard
-                    key={cam.id}
-                    cam={cam}
-                    selected={selectedCamera?.id === cam.id}
-                    onClick={() => setSelectedCamera(cam)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+            </div>
 
-        {/* RIGHT: Detail Panel */}
-        <CameraDetail
-          cam={selectedCamera}
-          onOpenLiveStream={onOpenLiveStream}
-          onStartAI={handleStartAI}
-          onDelete={handleDelete}
-          onRequestAccess={handleRequestAccess}
-          user={user}
-          isStateAdmin={isStateAdmin}
-          isDeptHead={isDeptHead}
-        />
-      </div>
+            {/* RIGHT: Detail Panel */}
+            <CameraDetail
+              cam={selectedCamera}
+              onOpenLiveStream={onOpenLiveStream}
+              onStartAI={handleStartAI}
+              onDelete={handleDelete}
+              onRequestAccess={handleRequestAccess}
+              user={user}
+              isStateAdmin={isStateAdmin}
+              isDeptHead={isDeptHead}
+              isDemoMode={isDemoMode}
+              onToggleDemoMode={handleToggleDemoMode}
+              demoSource={demoSource}
+              demoSourceName={demoSourceName}
+              onSelectDemoSource={handleSelectDemoSource}
+              onSelectLocalFile={handleSelectLocalFile}
+            />
+          </div>
+        </>
+      )}
 
       {/* ── Modals ── */}
       {showRegisterModal && (

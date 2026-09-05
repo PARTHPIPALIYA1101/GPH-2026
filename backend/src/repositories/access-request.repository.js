@@ -117,12 +117,12 @@ export async function decideRequest(id, { status, actorId, reason, override = fa
   const result = await database().query(
     `UPDATE camera_access_requests
      SET status = $2::access_request_status,
-         decided_by = $3,
+         decided_by = $3::uuid,
          decided_at = now(),
          decision_reason = $4,
-         override_by = CASE WHEN $5 THEN $3 ELSE NULL END,
-         override_at = CASE WHEN $5 THEN now() ELSE NULL END
-     WHERE id = $1 AND status = 'PENDING'
+         override_by = CASE WHEN $5::boolean THEN $3::uuid ELSE NULL END,
+         override_at = CASE WHEN $5::boolean THEN now() ELSE NULL END
+     WHERE id = $1::uuid AND status = 'PENDING'
      RETURNING id, status, expires_at AS "expiresAt"`,
     [id, status, actorId, reason, override]
   );
@@ -133,9 +133,9 @@ export async function revokeRequest(id, actorId) {
   const result = await database().query(
     `UPDATE camera_access_requests
      SET status = 'REVOKED',
-         revoked_by = $2,
+         revoked_by = $2::uuid,
          revoked_at = now()
-     WHERE id = $1 AND status = 'APPROVED'
+     WHERE id = $1::uuid AND status = 'APPROVED'
      RETURNING id, status`,
     [id, actorId]
   );

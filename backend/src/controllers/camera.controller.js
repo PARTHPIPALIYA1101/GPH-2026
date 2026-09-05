@@ -17,7 +17,7 @@ const createCameraSchema = z.object({
   externalId: z.string().min(1, 'External ID must be at least 1 character'),
   cameraNumber: z.string().optional(),
   name: z.string().min(1, 'Camera name must be at least 1 character'),
-  departmentId: z.string().uuid('Invalid Department ID').optional(),
+  departmentId: z.preprocess((val) => (val === '' || val === null ? undefined : val), z.string().uuid('Invalid Department ID').optional()),
   cityId: z.string().uuid('City must be selected'),
   location: z.string().min(1, 'Location description must be at least 1 character'),
   streamProtocol: z.string().optional().default('RTSP'),

@@ -32,7 +32,7 @@ export function MapPage({ onOpenLiveStream }) {
 
     setLoading(true);
     try {
-      const res = await apiRequest(`/search?plate=${encodeURIComponent(searchQuery)}&limit=20`);
+      const res = await apiRequest(`/search?plateNumber=${encodeURIComponent(searchQuery)}&limit=20`);
       if (res.success && res.data?.items?.length > 0) {
         const history = res.data.items.sort(
           (a, b) => new Date(b.detectedAt) - new Date(a.detectedAt)

@@ -164,6 +164,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/cameras" element={<CamerasPage onOpenLiveStream={handleOpenLiveStream} />} />
+            <Route path="/camera" element={<CamerasPage onOpenLiveStream={handleOpenLiveStream} />} />
             <Route path="/map" element={<MapPage onOpenLiveStream={handleOpenLiveStream} />} />
             <Route path="/live" element={<LivePage selectedCamera={selectedLiveCamera} />} />
             <Route path="/search" element={<SearchPage />} />

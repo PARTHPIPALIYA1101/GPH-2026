@@ -35,10 +35,25 @@ except ImportError:
     pass
 
 
+INDIAN_STATE_CODES = {
+    "AN", "AP", "AR", "AS", "BR", "CH", "CG", "DD", "DL", "DN", "GA", "GJ",
+    "HP", "HR", "JH", "JK", "KA", "KL", "LA", "LD", "MH", "ML", "MN", "MP",
+    "MZ", "NL", "OD", "PB", "PY", "RJ", "SK", "TN", "TR", "TS", "UK", "UP",
+    "WB", "BH"
+}
+
+NOISE_WORDS = {
+    "STOP", "EXIT", "TAXI", "BUS", "AUTO", "POLICE", "INDIA", "CAR",
+    "SPEED", "SLOW", "GOV", "GOVT", "TMTART", "CNG", "PETROL", "DIESEL",
+    "HERO", "HONDA", "SUZUKI", "TATA", "HYUNDAI", "MAHINDRA", "TOYOTA"
+}
+
+
 class VehicleMemory:
-    """Tracks vehicle type consensus over multiple frame detections."""
+    """Tracks vehicle type consensus and best verified plate over multiple frames."""
     def __init__(self):
         self.history = {}
+        self.plates = {}  # track_id -> {"text": str, "conf": float, "ocr_conf": float, "last_seen": float}
 
     def update(self, track_id, cls_name):
         if track_id not in self.history:
@@ -48,9 +63,32 @@ class VehicleMemory:
     def get_vehicle_type(self, track_id):
         if track_id not in self.history or not self.history[track_id]:
             return "vehicle"
-        # Return most common classification
         from collections import Counter
         return Counter(self.history[track_id]).most_common(1)[0][0]
+
+    def update_plate(self, track_id, plate_text, plate_conf, ocr_conf):
+        if not plate_text or track_id == -1:
+            return
+        existing = self.plates.get(track_id)
+        if not existing:
+            self.plates[track_id] = {
+                "text": plate_text,
+                "confidence": plate_conf,
+                "ocr_confidence": ocr_conf,
+                "updated_at": time.time()
+            }
+        else:
+            # Upgrade if new reading is longer or higher confidence
+            if len(plate_text) > len(existing["text"]) or (len(plate_text) == len(existing["text"]) and ocr_conf > existing["ocr_confidence"]):
+                self.plates[track_id] = {
+                    "text": plate_text,
+                    "confidence": max(plate_conf, existing["confidence"]),
+                    "ocr_confidence": max(ocr_conf, existing["ocr_confidence"]),
+                    "updated_at": time.time()
+                }
+
+    def get_best_plate(self, track_id):
+        return self.plates.get(track_id)
 
 
 def normalize_plate_text(text: str) -> str:
@@ -62,15 +100,42 @@ def normalize_plate_text(text: str) -> str:
     return clean
 
 
-def is_plausible_indian_plate(text: str) -> bool:
-    """Validate standard Indian license plate structure (e.g., MH12AB1234)."""
-    text = normalize_plate_text(text)
-    if len(text) < 6 or len(text) > 11:
+def is_valid_license_plate(text: str) -> bool:
+    """Rigorous check to filter out random OCR noise (e.g. single letters 'J', 'E', 2-digits '04', '63', 'LN')."""
+    if not text:
         return False
-    # Indian plates typically start with 2 state code letters
-    if not text[:2].isalpha():
+    clean = normalize_plate_text(text)
+    
+    # Real plates must be between 4 and 11 characters
+    if len(clean) < 4 or len(clean) > 11:
         return False
+    
+    # License plates must contain digits (e.g. GJ01 or 1234)
+    has_digit = any(c.isdigit() for c in clean)
+    if not has_digit:
+        return False
+
+    # License plates must contain letters (e.g. state code GJ, MH or series AB)
+    has_alpha = any(c.isalpha() for c in clean)
+    if not has_alpha:
+        return False
+
+    # Reject known non-plate words/stickers
+    if clean in NOISE_WORDS:
+        return False
+
     return True
+
+
+def is_plausible_indian_plate(text: str) -> bool:
+    """Validate standard Indian license plate structure (e.g., GJ01AB1234 or MH12DE1433)."""
+    clean = normalize_plate_text(text)
+    if not is_valid_license_plate(clean):
+        return False
+    # Check if starts with a recognized Indian state code
+    if clean[:2] in INDIAN_STATE_CODES:
+        return True
+    return False
 
 
 def preprocess_plate_crops(plate_crop):
@@ -96,12 +161,141 @@ def preprocess_plate_crops(plate_crop):
     return variants
 
 
+from collections import defaultdict, Counter
+import re
+
+
+# ============================================================
+# PIPELINE2: TEMPORAL PLATE EVIDENCE ENGINE
+# ============================================================
+
+class TemporalPlateFusion:
+    """Consolidates multi-frame license plate observations to eliminate false positives."""
+    def __init__(self, min_observations=2, min_confidence=0.35, max_history=20):
+        self.min_observations = min_observations
+        self.min_confidence = min_confidence
+        self.max_history = max_history
+        self.history = defaultdict(list)
+
+    @staticmethod
+    def normalize_text(text):
+        if text is None:
+            return None
+        text = str(text).upper()
+        text = re.sub(r"[^A-Z0-9]", "", text)
+        return text if text else None
+
+    def add_observation(self, track_id, text, confidence):
+        if track_id is None or text is None:
+            return None
+        try:
+            confidence = float(confidence)
+        except Exception:
+            return None
+        if confidence < self.min_confidence:
+            return None
+
+        text = self.normalize_text(text)
+        if text is None or not is_valid_license_plate(text):
+            return None
+
+        observation = {
+            "text": text,
+            "confidence": confidence,
+            "timestamp": time.time()
+        }
+        self.history[int(track_id)].append(observation)
+        self.history[int(track_id)] = self.history[int(track_id)][-self.max_history:]
+        return self.get_reliable_plate(track_id)
+
+    def get_reliable_plate(self, track_id):
+        if track_id is None:
+            return None
+        observations = self.history.get(int(track_id), [])
+        if not observations:
+            return None
+
+        counts = Counter(obs["text"] for obs in observations)
+        best_text, count = counts.most_common(1)[0]
+
+        # Require repeated observations OR very confident Indian plate
+        if count < self.min_observations:
+            high_conf = [
+                obs for obs in observations
+                if obs["confidence"] >= 0.65 and is_plausible_indian_plate(obs["text"])
+            ]
+            if high_conf:
+                best_text = high_conf[-1]["text"]
+            else:
+                return None
+
+        matching = [obs for obs in observations if obs["text"] == best_text]
+        if not matching:
+            return None
+
+        confidence = sum(obs["confidence"] for obs in matching) / len(matching)
+        return {
+            "text": best_text,
+            "confidence": round(confidence, 4)
+        }
+
+    def remove_track(self, track_id):
+        if track_id is not None:
+            self.history.pop(int(track_id), None)
+
+    def clear(self):
+        self.history.clear()
+
+
+def get_box_center(box):
+    x1, y1, x2, y2 = box
+    return ((x1 + x2) / 2, (y1 + y2) / 2)
+
+
+def point_inside_box(point, box):
+    px, py = point
+    x1, y1, x2, y2 = box
+    return x1 <= px <= x2 and y1 <= py <= y2
+
+
+def find_vehicle_for_plate(plate_box, vehicle_boxes):
+    """Associates a detected plate with the vehicle containing its center."""
+    plate_center = get_box_center(plate_box)
+    candidates = []
+    for idx, vehicle in enumerate(vehicle_boxes):
+        if point_inside_box(plate_center, vehicle["box"]):
+            x1, y1, x2, y2 = vehicle["box"]
+            area = max(0, x2 - x1) * max(0, y2 - y1)
+            candidates.append((area, idx))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][1]
+
+
+def prepare_plate_for_ocr(crop):
+    """Pipeline2 enhanced plate preprocessing: 4x bicubic upscale + CLAHE + bilateral filter."""
+    if crop is None or crop.size == 0:
+        return None
+    h, w = crop.shape[:2]
+    if h < 10 or w < 24:
+        return None
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    scale = 4 if w < 160 else 2
+    enlarged = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(enlarged)
+    denoised = cv2.bilateralFilter(enhanced, 5, 40, 40)
+    return denoised
+
+
 class SentinelPipeline:
+    """Sentinel AI Pipeline2: Vehicle Tracking + Full-Frame Plate Detection + Temporal Fusion."""
     def __init__(self, vehicle_model_path, plate_model_path, ocr_engine="easyocr", imgsz=640, conf=0.25):
-        print(f"[Sentinel AI] Loading Vehicle Model: {vehicle_model_path}")
+        print(f"[Sentinel AI Pipeline2] Loading Vehicle Model: {vehicle_model_path}")
         self.vehicle_model = YOLO(vehicle_model_path)
         
-        print(f"[Sentinel AI] Loading Plate Model: {plate_model_path}")
+        print(f"[Sentinel AI Pipeline2] Loading Plate Model: {plate_model_path}")
         self.plate_model = YOLO(plate_model_path)
         
         self.imgsz = imgsz
@@ -109,68 +303,84 @@ class SentinelPipeline:
         self.ocr_engine_type = ocr_engine.lower()
         self.ocr_reader = None
         self.memory = VehicleMemory()
+        self.fusion = TemporalPlateFusion(min_observations=2, min_confidence=0.35, max_history=20)
         
         self._init_ocr()
 
     def _init_ocr(self):
         if self.ocr_engine_type == "easyocr":
             if EASYOCR_AVAILABLE:
-                print("[Sentinel AI] Initializing EasyOCR Reader (English)...")
+                print("[Sentinel AI Pipeline2] Initializing EasyOCR Reader (English)...")
                 self.ocr_reader = easyocr.Reader(['en'], gpu=True)
             else:
                 print("[Warning] EasyOCR requested but not installed.")
         elif self.ocr_engine_type == "paddleocr":
             if PADDLEOCR_AVAILABLE:
-                print("[Sentinel AI] Initializing PaddleOCR Reader...")
+                print("[Sentinel AI Pipeline2] Initializing PaddleOCR Reader...")
                 self.ocr_reader = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
             else:
                 print("[Warning] PaddleOCR requested but not installed.")
 
     def run_ocr(self, crop):
-        if self.ocr_reader is None:
+        if self.ocr_reader is None or crop is None or crop.size == 0:
             return None, 0.0
 
-        variants = preprocess_plate_crops(crop)
-        best_text = ""
-        best_conf = 0.0
+        # Step 1: Pipeline2 enhanced preprocessed crop
+        prepared = prepare_plate_for_ocr(crop)
+        if prepared is None:
+            return None, 0.0
 
-        for var_name, var_img in variants:
-            text, conf = "", 0.0
-            try:
-                if self.ocr_engine_type == "easyocr" and EASYOCR_AVAILABLE:
-                    results = self.ocr_reader.readtext(var_img)
-                    for _, res_text, res_conf in results:
-                        if res_conf > conf:
-                            text = res_text
-                            conf = res_conf
-                elif self.ocr_engine_type == "paddleocr" and PADDLEOCR_AVAILABLE:
-                    results = self.ocr_reader.ocr(var_img, cls=True)
-                    if results and results[0]:
-                        for line in results[0]:
-                            res_text = line[1][0]
-                            res_conf = line[1][1]
-                            if res_conf > conf:
-                                text = res_text
-                                conf = res_conf
-            except Exception as e:
-                continue
+        candidates = []
+        try:
+            if self.ocr_engine_type == "easyocr" and EASYOCR_AVAILABLE:
+                # Run OCR on enhanced image
+                results = self.ocr_reader.readtext(prepared, detail=1, paragraph=False)
+                if results:
+                    filtered = [
+                        r for r in results
+                        if float(r[2]) >= 0.20 and len(normalize_plate_text(r[1])) > 0
+                    ]
+                    if filtered:
+                        # Multi-line / multi-box plate assembly
+                        filtered.sort(key=lambda r: (
+                            int(np.mean([pt[1] for pt in r[0]]) / 18) * 18,
+                            np.mean([pt[0] for pt in r[0]])
+                        ))
+                        combined_text = "".join(normalize_plate_text(r[1]) for r in filtered)
+                        avg_conf = float(np.mean([r[2] for r in filtered]))
 
-            clean_text = normalize_plate_text(text)
-            if clean_text:
-                score_boost = 0.2 if is_plausible_indian_plate(clean_text) else 0.0
-                adjusted_conf = conf + score_boost
-                if adjusted_conf > best_conf:
-                    best_text = clean_text
-                    best_conf = conf
+                        if is_valid_license_plate(combined_text) and avg_conf >= 0.30:
+                            candidates.append({"text": combined_text, "confidence": avg_conf})
 
-        return (best_text, best_conf) if best_text else (None, 0.0)
+            elif self.ocr_engine_type == "paddleocr" and PADDLEOCR_AVAILABLE:
+                results = self.ocr_reader.ocr(prepared, cls=True)
+                if results and results[0]:
+                    lines = [line for line in results[0] if float(line[1][1]) >= 0.25]
+                    if lines:
+                        combined = "".join(normalize_plate_text(l[1][0]) for l in lines)
+                        avg_conf = float(np.mean([l[1][1] for l in lines]))
+                        if is_valid_license_plate(combined) and avg_conf >= 0.30:
+                            candidates.append({"text": combined, "confidence": avg_conf})
+
+        except Exception:
+            pass
+
+        if not candidates:
+            return None, 0.0
+
+        # Pick best candidate with Indian state priority bonus
+        best = max(
+            candidates,
+            key=lambda c: c["confidence"] + (0.35 if is_plausible_indian_plate(c["text"]) else 0.0)
+        )
+        return best["text"], round(best["confidence"], 3)
 
     def process_frame(self, frame, pts_ms=None):
         if pts_ms is None:
             pts_ms = int(time.time() * 1000)
 
-        # 1. Track Vehicles with YOLO & ByteTrack
-        results = self.vehicle_model.track(
+        # 1. Pipeline2: Track Vehicles with YOLO & ByteTrack
+        vehicle_results = self.vehicle_model.track(
             frame,
             imgsz=self.imgsz,
             conf=self.conf,
@@ -178,83 +388,141 @@ class SentinelPipeline:
             verbose=False
         )
 
+        vehicle_boxes = []
+        if vehicle_results and len(vehicle_results) > 0 and vehicle_results[0].boxes is not None:
+            boxes = vehicle_results[0].boxes
+            xyxy_list = boxes.xyxy.cpu().numpy().tolist()
+            confs = boxes.conf.cpu().numpy().tolist()
+            classes = boxes.cls.cpu().numpy().astype(int).tolist()
+            track_ids = boxes.id.cpu().numpy().astype(int).tolist() if boxes.id is not None else [-1] * len(xyxy_list)
+
+            for xyxy, conf, cls_id, tid in zip(xyxy_list, confs, classes, track_ids):
+                cls_name = self.vehicle_model.names.get(cls_id, "vehicle")
+                if tid != -1:
+                    self.memory.update(tid, cls_name)
+                    cls_name = self.memory.get_vehicle_type(tid)
+
+                vehicle_boxes.append({
+                    "box": list(map(int, xyxy)),
+                    "confidence": float(conf),
+                    "class_name": cls_name,
+                    "track_id": tid
+                })
+
+        # 2. Pipeline2: Full-frame plate detection for maximum resolution
+        plate_results = self.plate_model.predict(
+            frame,
+            imgsz=640,
+            conf=0.20,
+            verbose=False
+        )
+
+        detected_plates = []
+        if plate_results and len(plate_results) > 0 and plate_results[0].boxes is not None:
+            pboxes = plate_results[0].boxes
+            pxyxy = pboxes.xyxy.cpu().numpy().tolist()
+            pconfs = pboxes.conf.cpu().numpy().tolist()
+
+            for pbox, pconf in zip(pxyxy, pconfs):
+                px1, py1, px2, py2 = map(int, pbox)
+                plate_crop = frame[max(0, py1):min(frame.shape[0], py2), max(0, px1):min(frame.shape[1], px2)]
+                
+                # Associated vehicle
+                matched_veh_idx = find_vehicle_for_plate([px1, py1, px2, py2], vehicle_boxes)
+
+                ocr_text, ocr_conf = self.run_ocr(plate_crop)
+
+                detected_plates.append({
+                    "bbox": [px1, py1, px2, py2],
+                    "confidence": round(float(pconf), 3),
+                    "matched_vehicle_idx": matched_veh_idx,
+                    "ocr_text": ocr_text,
+                    "ocr_confidence": ocr_conf
+                })
+
+        # 3. Pipeline2: Temporal Fusion & Assembly
         detections = []
         annotated_frame = frame.copy()
 
-        if results and len(results) > 0 and results[0].boxes is not None:
-            boxes = results[0].boxes
-            for box in boxes:
-                xyxy = box.xyxy[0].cpu().numpy().tolist()
-                track_id = int(box.id[0]) if box.id is not None else -1
-                cls_id = int(box.cls[0])
-                cls_name = self.vehicle_model.names.get(cls_id, "vehicle")
+        for idx, vehicle in enumerate(vehicle_boxes):
+            vx1, vy1, vx2, vy2 = vehicle["box"]
+            track_id = vehicle["track_id"]
+            cls_name = vehicle["class_name"]
 
+            # Find plates matching this vehicle
+            matching_plates = [p for p in detected_plates if p["matched_vehicle_idx"] == idx]
+
+            plate_info = None
+            if matching_plates:
+                best_p = max(matching_plates, key=lambda p: p["confidence"])
+                p_text = best_p["ocr_text"]
+                p_conf = best_p["ocr_confidence"]
+
+                # Feed into TemporalPlateFusion
+                if p_text and track_id != -1:
+                    fused = self.fusion.add_observation(track_id, p_text, p_conf)
+                    if fused:
+                        p_text = fused["text"]
+                        p_conf = fused["confidence"]
+                    else:
+                        # Check existing reliable plate from memory
+                        existing_fused = self.fusion.get_reliable_plate(track_id)
+                        if existing_fused:
+                            p_text = existing_fused["text"]
+                            p_conf = existing_fused["confidence"]
+
+                if p_text:
+                    self.memory.update_plate(track_id, p_text, best_p["confidence"], p_conf)
+                elif track_id != -1:
+                    cached = self.memory.get_best_plate(track_id)
+                    if cached:
+                        p_text = cached["text"]
+                        p_conf = cached["ocr_confidence"]
+
+                plate_info = {
+                    "bbox": best_p["bbox"],
+                    "confidence": best_p["confidence"],
+                    "text": p_text,
+                    "ocr_confidence": p_conf
+                }
+
+                # Draw plate bounding box
+                px1, py1, px2, py2 = best_p["bbox"]
+                cv2.rectangle(annotated_frame, (px1, py1), (px2, py2), (0, 255, 0), 2)
+                if p_text:
+                    cv2.putText(annotated_frame, f"PLATE: {p_text}", (px1, max(0, py1 - 5)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
+            else:
+                # Reuse cached plate from memory if tracked vehicle had a previous valid plate
                 if track_id != -1:
-                    self.memory.update(track_id, cls_name)
-                    cls_name = self.memory.get_vehicle_type(track_id)
+                    cached = self.memory.get_best_plate(track_id)
+                    if cached:
+                        plate_info = {
+                            "bbox": [vx1, vy1, vx1 + 100, vy1 + 30],
+                            "confidence": cached["confidence"],
+                            "text": cached["text"],
+                            "ocr_confidence": cached["ocr_confidence"]
+                        }
 
-                x1, y1, x2, y2 = map(int, xyxy)
-                vehicle_crop = frame[max(0, y1):min(frame.shape[0], y2), max(0, x1):min(frame.shape[1], x2)]
+            # Draw vehicle bounding box
+            cv2.rectangle(annotated_frame, (vx1, vy1), (vx2, vy2), (255, 0, 0), 2)
+            veh_label = f"#{track_id} {cls_name}" if track_id != -1 else cls_name
+            cv2.putText(annotated_frame, veh_label, (vx1, max(0, vy1 - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-                plate_info = None
-
-                # 2. Detect Plate within Vehicle Crop
-                if vehicle_crop.size > 0:
-                    plate_results = self.plate_model(
-                        vehicle_crop,
-                        imgsz=320,
-                        conf=0.25,
-                        verbose=False
-                    )
-
-                    if plate_results and len(plate_results) > 0 and plate_results[0].boxes is not None:
-                        p_boxes = plate_results[0].boxes
-                        if len(p_boxes) > 0:
-                            best_p_box = max(p_boxes, key=lambda b: float(b.conf[0]))
-                            px1, py1, px2, py2 = map(int, best_p_box.xyxy[0].cpu().numpy().tolist())
-                            p_conf = float(best_p_box.conf[0])
-
-                            plate_crop = vehicle_crop[max(0, py1):min(vehicle_crop.shape[0], py2),
-                                                      max(0, px1):min(vehicle_crop.shape[1], px2)]
-
-                            # Map crop bbox to original frame coordinates
-                            abs_px1, abs_py1 = x1 + px1, y1 + py1
-                            abs_px2, abs_py2 = x1 + px2, y1 + py2
-
-                            # 3. OCR Recognition
-                            plate_text, ocr_conf = self.run_ocr(plate_crop)
-
-                            plate_info = {
-                                "bbox": [abs_px1, abs_py1, abs_px2, abs_py2],
-                                "confidence": round(p_conf, 3),
-                                "text": plate_text,
-                                "ocr_confidence": round(ocr_conf, 3)
-                            }
-
-                            # Draw plate box
-                            cv2.rectangle(annotated_frame, (abs_px1, abs_py1), (abs_px2, abs_py2), (0, 255, 0), 2)
-                            label_str = f"PLATE: {plate_text}" if plate_text else "PLATE"
-                            cv2.putText(annotated_frame, label_str, (abs_px1, max(0, abs_py1 - 5)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-                # Draw vehicle box
-                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                veh_label = f"#{track_id} {cls_name}" if track_id != -1 else cls_name
-                cv2.putText(annotated_frame, veh_label, (x1, max(0, y1 - 5)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
-                detections.append({
-                    "track_id": track_id,
-                    "vehicle_type": cls_name,
-                    "bbox": [x1, y1, x2, y2],
-                    "plate": plate_info
-                })
+            detections.append({
+                "track_id": track_id,
+                "vehicle_type": cls_name,
+                "bbox": [vx1, vy1, vx2, vy2],
+                "plate": plate_info
+            })
 
         event_payload = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "pts_ms": pts_ms,
             "vehicle_count": len(detections),
-            "detections": detections
+            "detections": detections,
+            "pipeline": "pipeline2"
         }
 
         return annotated_frame, event_payload

@@ -4,7 +4,7 @@ import { writeAudit } from '../repositories/audit.repository.js';
 import { failure, success } from '../utils/api-response.js';
 
 const createUserSchema = z.object({
-  departmentId: z.string().uuid().optional(),
+  departmentId: z.preprocess((val) => (val === '' || val === null ? undefined : val), z.string().uuid().optional()),
   email: z.string().email(),
   displayName: z.string().min(2),
   password: z.string().min(8),

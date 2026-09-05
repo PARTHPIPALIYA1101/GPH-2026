@@ -3,8 +3,8 @@ import { writeAudit } from '../repositories/audit.repository.js';
 import { success } from '../utils/api-response.js';
 
 export async function search(req, res) {
+  const plateNumber = req.query.plateNumber || req.query.plate;
   const {
-    plateNumber,
     vehicleType,
     vehicleColor,
     detectionType,
