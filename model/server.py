@@ -48,8 +48,11 @@ app.add_middleware(
 
 # Global State & Model Paths
 BACKEND_INGEST_URL = os.getenv("BACKEND_INGEST_URL", "http://localhost:4000/api/ai/detections/ingest")
-VEHICLE_MODEL_PATH = os.path.join(CURRENT_DIR, "yolo11n.pt")
-PLATE_MODEL_PATH = os.path.join(CURRENT_DIR, "license-plate-finetune-v1n.pt")
+WEIGHTS_DIR = os.path.join(CURRENT_DIR, "weights")
+VEHICLE_MODEL_PATH = os.path.join(WEIGHTS_DIR, "uvh26_yolo11s.pt")
+SECONDARY_MODEL_PATH = os.path.join(WEIGHTS_DIR, "bd_traffic.pt")
+COCO_MODEL_PATH = os.path.join(WEIGHTS_DIR, "yolo11n.pt")
+PLATE_MODEL_PATH = os.path.join(WEIGHTS_DIR, "license-plate-finetune-v1n.pt")
 UPLOADS_DIR = os.path.join(CURRENT_DIR, "uploads")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
@@ -82,13 +85,19 @@ def get_or_init_pipeline():
         return None
 
     try:
-        print(f"[Sentinel Server] Loading PyTorch AI models: {VEHICLE_MODEL_PATH}, {PLATE_MODEL_PATH}")
+        print(f"[Sentinel Server] Loading PyTorch AI models from {WEIGHTS_DIR}:")
+        print(f"  - Primary Vehicle: {VEHICLE_MODEL_PATH}")
+        print(f"  - Secondary Traffic: {SECONDARY_MODEL_PATH}")
+        print(f"  - COCO Base: {COCO_MODEL_PATH}")
+        print(f"  - Plate Model: {PLATE_MODEL_PATH}")
         pipeline_instance = SentinelPipeline(
             vehicle_model_path=VEHICLE_MODEL_PATH,
             plate_model_path=PLATE_MODEL_PATH,
             ocr_engine="easyocr",
             imgsz=640,
-            conf=0.25
+            conf=0.25,
+            secondary_model_path=SECONDARY_MODEL_PATH if os.path.exists(SECONDARY_MODEL_PATH) else None,
+            coco_model_path=COCO_MODEL_PATH if os.path.exists(COCO_MODEL_PATH) else None
         )
         print("[Sentinel Server] Real AI Models loaded successfully into memory!")
     except Exception as e:
@@ -97,6 +106,28 @@ def get_or_init_pipeline():
         pipeline_instance = None
 
     return pipeline_instance
+
+
+@app.get("/health")
+@app.get("/")
+def health_check():
+    return {
+        "status": "UP",
+        "service": "Sentinel AI Multi-Vehicle Inference Microservice",
+        "supported_classes": [
+            "auto_rickshaw", "rickshaw", "motorcycle", "car", "truck", "bus", "van", "bicycle"
+        ],
+        "weights_dir": WEIGHTS_DIR,
+        "models": {
+            "vehicle_detector": os.path.basename(VEHICLE_MODEL_PATH) if os.path.exists(VEHICLE_MODEL_PATH) else None,
+            "secondary_detector": os.path.basename(SECONDARY_MODEL_PATH) if os.path.exists(SECONDARY_MODEL_PATH) else None,
+            "coco_detector": os.path.basename(COCO_MODEL_PATH) if os.path.exists(COCO_MODEL_PATH) else None,
+            "plate_detector": os.path.basename(PLATE_MODEL_PATH) if os.path.exists(PLATE_MODEL_PATH) else None
+        },
+        "models_loaded": pipeline_instance is not None,
+        "active_jobs_count": len(active_jobs),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 
 def create_loading_frame(camera_id: str) -> np.ndarray:
@@ -341,6 +372,8 @@ def ai_job_worker(job_id: str, camera_id: str, stream_url: Optional[str]):
 
 
 @app.post("/api/v1/jobs")
+@app.post("/api/v1/jobs/start")
+@app.post("/start-job")
 def start_job(req: StartJobRequest):
     camera_id = req.cameraId
     stream_url = req.streamUrl or resolve_camera_rtsp_url(camera_id, req.streamUrl)
@@ -451,8 +484,9 @@ async def upload_demo_video(
 
 
 @app.post("/api/v1/infer/frame")
+@app.post("/infer-frame")
 async def infer_single_frame(request: Request):
-    """Executes real-time inference on a single image frame directly using license-plate-finetune-v1n.pt and yolo11n.pt."""
+    """Executes real-time inference on a single image frame using the full multi-model Sentinel AI ensemble from weights/."""
     pipe = get_or_init_pipeline()
     if not pipe:
         raise HTTPException(status_code=503, detail="AI Pipeline models could not be loaded")
@@ -513,22 +547,32 @@ def get_latest_detections(camera_id: str):
     }
 
 
+@app.get("/api/v1/jobs")
+@app.get("/jobs")
+def list_jobs():
+    return {"jobs": list(active_jobs.values())}
+
+
 @app.post("/api/v1/jobs/{job_id}/stop")
-def stop_job(job_id: str):
-    job = active_jobs.get(job_id)
+@app.post("/stop-job")
+def stop_job(job_id: Optional[str] = None, externalJobId: Optional[str] = None):
+    target_id = job_id or externalJobId
+    if not target_id:
+        return {"success": False, "message": "job_id or externalJobId required"}
+    job = active_jobs.get(target_id)
     if not job:
         for j_id, j_state in list(active_jobs.items()):
-            if j_state.get("cameraId") == job_id or j_id == job_id:
+            if j_state.get("cameraId") == target_id or j_id == target_id:
                 job = j_state
-                job_id = j_id
+                target_id = j_id
                 break
 
     if not job:
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+        raise HTTPException(status_code=404, detail=f"Job '{target_id}' not found")
 
     job["running"] = False
     job["status"] = "STOPPED"
-    return {"externalJobId": job_id, "status": "STOPPED", "message": "AI job stopped successfully"}
+    return {"externalJobId": target_id, "status": "STOPPED", "message": "AI job stopped successfully"}
 
 
 @app.get("/api/v1/jobs/{job_id}")
@@ -579,6 +623,7 @@ def _mjpeg_generator(frame_store: dict, camera_id: str):
 
 
 @app.get("/api/v1/streams/{camera_id}/mjpeg")
+@app.get("/video_feed/{camera_id}")
 def stream_mjpeg(camera_id: str):
     """Real AI-annotated MJPEG stream directly running YOLOv11 + license plate model."""
     return StreamingResponse(
@@ -588,6 +633,7 @@ def stream_mjpeg(camera_id: str):
 
 
 @app.get("/api/v1/streams/{camera_id}/raw_mjpeg")
+@app.get("/raw_feed/{camera_id}")
 def stream_raw_mjpeg(camera_id: str):
     """Raw stream."""
     return StreamingResponse(

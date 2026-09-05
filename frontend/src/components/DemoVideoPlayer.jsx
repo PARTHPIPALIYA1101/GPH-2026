@@ -26,6 +26,18 @@ function isValidPlateNumber(text, ocrConf) {
   return true;
 }
 
+const VEHICLE_COLORS = {
+  auto_rickshaw: '#f59e0b',
+  rickshaw: '#eab308',
+  motorcycle: '#ec4899',
+  car: '#10b981',
+  bus: '#f97316',
+  truck: '#0284c7',
+  van: '#06b6d4',
+  bicycle: '#22c55e',
+  vehicle: '#94a3b8'
+};
+
 export function DemoVideoPlayer({
   camera,
   isDemoMode,
@@ -52,7 +64,9 @@ export function DemoVideoPlayer({
   const [modelLatency, setModelLatency] = useState(0);
   const [realDetections, setRealDetections] = useState([]);
   const [realDetectionLog, setRealDetectionLog] = useState([]);
-  const [inferMode, setInferMode] = useState('mjpeg'); // 'mjpeg' | 'html5_infer'
+  const [inferMode, setInferMode] = useState(
+    currentSource?.startsWith?.('blob:') ? 'html5_infer' : 'mjpeg'
+  ); // 'mjpeg' | 'html5_infer'
   const [syncStatus, setSyncStatus] = useState(null);
   const [isInferencing, setIsInferencing] = useState(false);
 
@@ -68,6 +82,8 @@ export function DemoVideoPlayer({
   const isAudio = sourceName?.toLowerCase().endsWith('.mp3') ||
     currentSource?.toLowerCase().endsWith('.mp3');
 
+  const isVideoPlayerMode = inferMode === 'html5_infer' || currentSource?.startsWith?.('blob:');
+
   // Real-time clock for surveillance overlay
   useEffect(() => {
     const timer = setInterval(() => {
@@ -82,9 +98,9 @@ export function DemoVideoPlayer({
     async function checkModelHealth() {
       try {
         const start = performance.now();
-        const res = await fetch(`${AI_MODEL_BASE_URL}/api/v1/jobs`, { method: 'GET' }).catch(() => null);
+        const res = await fetch(`${AI_MODEL_BASE_URL}/health`, { method: 'GET' }).catch(() => null);
         if (mounted) {
-          if (res && res.status < 500) {
+          if (res && res.ok) {
             setIsModelOnline(true);
             setModelLatency(Math.round(performance.now() - start));
           } else {
@@ -97,7 +113,7 @@ export function DemoVideoPlayer({
     }
 
     checkModelHealth();
-    const interval = setInterval(checkModelHealth, 5000);
+    const interval = setInterval(checkModelHealth, 4000);
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -111,6 +127,11 @@ export function DemoVideoPlayer({
     setIsPlaying(true);
 
     async function initModelJob() {
+      // If currentSource is a local blob from storage, always run in HTML5 video mode
+      if (typeof currentSource === 'string' && currentSource.startsWith('blob:')) {
+        setInferMode('html5_infer');
+        return;
+      }
       if (!isModelOnline) return;
       try {
         setSyncStatus('Initiating real PyTorch model job...');
@@ -195,6 +216,8 @@ export function DemoVideoPlayer({
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
     const frameBase64 = canvas.toDataURL('image/jpeg', 0.65);
+    const inferWidth = canvas.width;
+    const inferHeight = canvas.height;
 
     try {
       setIsInferencing(true);
@@ -208,7 +231,8 @@ export function DemoVideoPlayer({
       if (res.ok) {
         const data = await res.json();
         setModelLatency(Math.round(performance.now() - start));
-        const dets = data.detections || [];
+        const rawDets = data.detections || [];
+        const dets = rawDets.map(d => ({ ...d, inferWidth, inferHeight }));
         setRealDetections(dets);
 
         // Append verified real detections to log
@@ -248,7 +272,9 @@ export function DemoVideoPlayer({
       return;
     }
 
-    inferIntervalRef.current = setInterval(executeFrameInference, 750);
+    // Trigger frame inference immediately on mode switch and every 600ms
+    executeFrameInference();
+    inferIntervalRef.current = setInterval(executeFrameInference, 600);
     return () => {
       if (inferIntervalRef.current) clearInterval(inferIntervalRef.current);
     };
@@ -258,12 +284,17 @@ export function DemoVideoPlayer({
   const handleLocalFileUpload = async (file) => {
     if (!file) return;
 
-    // 1. Give local preview immediately
-    onSelectLocalFile(file);
+    setHasError(false);
+    setErrorMessage('');
 
-    // 2. Upload file to Real PyTorch Model Server
+    // 1. Give local preview immediately in HTML5 video mode
+    onSelectLocalFile(file);
+    setInferMode('html5_infer');
+    setIsPlaying(true);
+    setSyncStatus(`Loaded "${file.name}" from storage. Starting real AI inference...`);
+
+    // 2. Upload file to Real PyTorch Model Server in background
     if (isModelOnline) {
-      setSyncStatus(`Uploading "${file.name}" to real PyTorch model server...`);
       try {
         const formData = new FormData();
         formData.append('file', file);
@@ -276,14 +307,14 @@ export function DemoVideoPlayer({
 
         if (res.ok) {
           const data = await res.json();
-          setSyncStatus(`✓ "${file.name}" uploaded to real YOLO11 + license plate model!`);
+          setSyncStatus(`✓ "${file.name}" synchronized with PyTorch server for MJPEG stream`);
           setTimeout(() => setSyncStatus(null), 4000);
         } else {
-          setSyncStatus('Upload complete. Streaming locally.');
+          setSyncStatus('Local video active. Real-time frame inference running.');
         }
       } catch (err) {
         console.warn('Upload to AI server error:', err);
-        setSyncStatus('Playing video in local mode with live frame inference.');
+        setSyncStatus('Local video active with live frame inference.');
       }
     }
   };
@@ -500,7 +531,7 @@ export function DemoVideoPlayer({
             />
 
             {/* VIEW OPTION 1: Real AI-annotated MJPEG stream from model/server.py */}
-            {!isAudio && !hasError && inferMode === 'mjpeg' && (
+            {!isAudio && !hasError && inferMode === 'mjpeg' && !currentSource?.startsWith?.('blob:') && (
               <img
                 src={`${AI_MODEL_BASE_URL}/api/v1/streams/${activeCameraId}/mjpeg?t=${Date.now()}`}
                 alt="Real AI Model Annotated Stream"
@@ -520,7 +551,7 @@ export function DemoVideoPlayer({
             )}
 
             {/* VIEW OPTION 2: HTML5 Video with Real-Time Frame Inference Overlay */}
-            {!isAudio && !hasError && inferMode === 'html5_infer' && (
+            {!isAudio && !hasError && (inferMode === 'html5_infer' || currentSource?.startsWith?.('blob:')) && (
               <>
                 <video
                   ref={videoRef}
@@ -551,14 +582,15 @@ export function DemoVideoPlayer({
                   <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 15 }}>
                     {realDetections.map((det, idx) => {
                       const [x1, y1, x2, y2] = det.bbox || [0, 0, 0, 0];
-                      const vw = videoRef.current?.videoWidth || 640;
-                      const vh = videoRef.current?.videoHeight || 360;
+                      const baseW = det.inferWidth || 640;
+                      const baseH = det.inferHeight || 360;
 
-                      const leftPct = ((x1 / vw) * 100).toFixed(1);
-                      const topPct = ((y1 / vh) * 100).toFixed(1);
-                      const widthPct = (((x2 - x1) / vw) * 100).toFixed(1);
-                      const heightPct = (((y2 - y1) / vh) * 100).toFixed(1);
+                      const leftPct = ((x1 / baseW) * 100).toFixed(1);
+                      const topPct = ((y1 / baseH) * 100).toFixed(1);
+                      const widthPct = (((x2 - x1) / baseW) * 100).toFixed(1);
+                      const heightPct = (((y2 - y1) / baseH) * 100).toFixed(1);
 
+                      const color = VEHICLE_COLORS[det.vehicle_type] || 'var(--accent-saffron, #e58a24)';
                       const plate = det.plate;
 
                       return (
@@ -570,24 +602,24 @@ export function DemoVideoPlayer({
                             top: `${topPct}%`,
                             width: `${widthPct}%`,
                             height: `${heightPct}%`,
-                            border: '2px solid var(--accent-saffron, #e58a24)',
-                            background: 'rgba(229, 138, 36, 0.08)',
-                            boxShadow: '0 0 10px rgba(229, 138, 36, 0.4)',
+                            border: `2px solid ${color}`,
+                            background: `${color}18`,
+                            boxShadow: `0 0 10px ${color}66`,
                             display: 'flex',
                             flexDirection: 'column',
                             justifyContent: 'space-between'
                           }}
                         >
                           <div style={{
-                            background: 'var(--accent-saffron, #e58a24)',
+                            background: color,
                             color: '#000',
                             fontFamily: 'var(--font-mono)',
                             fontSize: '9px',
                             fontWeight: 800,
-                            padding: '1px 4px',
+                            padding: '1px 5px',
                             width: 'fit-content'
                           }}>
-                            {det.vehicle_type?.toUpperCase()} {det.track_id !== -1 ? `#${det.track_id}` : ''}
+                            {det.vehicle_type?.replace('_', ' ')?.toUpperCase()} {det.track_id !== -1 ? `#${det.track_id}` : ''}
                           </div>
 
                           {plate && plate.text && isValidPlateNumber(plate.text, plate.ocr_confidence) && (
@@ -595,14 +627,14 @@ export function DemoVideoPlayer({
                               background: '#fef08a',
                               color: '#000',
                               fontFamily: 'var(--font-mono)',
-                              fontSize: '9px',
+                              fontSize: '10px',
                               fontWeight: 900,
-                              padding: '1px 4px',
+                              padding: '1px 5px',
                               borderRadius: 1,
                               border: '1px solid #ca8a04',
                               width: 'fit-content'
                             }}>
-                              {plate.text} ({Math.round((plate.confidence || 0.9) * 100)}%)
+                              🏷️ {plate.text} ({Math.round((plate.confidence || 0.9) * 100)}%)
                             </div>
                           )}
                         </div>
@@ -816,7 +848,7 @@ export function DemoVideoPlayer({
                 }}>
                   <span>MODELS: yolo11n.pt + license-plate-finetune-v1n.pt</span>
                   <span>LATENCY: {modelLatency}ms · FPS: ~25</span>
-                  {inferMode === 'html5_infer' && <span>{formatTime(currentTime)} / {formatTime(duration)}</span>}
+                  {isVideoPlayerMode && <span>{formatTime(currentTime)} / {formatTime(duration)}</span>}
                 </div>
               </>
             )}
@@ -832,7 +864,7 @@ export function DemoVideoPlayer({
             flexDirection: 'column',
             gap: 10
           }}>
-            {inferMode === 'html5_infer' && (
+            {isVideoPlayerMode && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)', minWidth: 32 }}>
                   {formatTime(currentTime)}
@@ -854,7 +886,7 @@ export function DemoVideoPlayer({
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {inferMode === 'html5_infer' && (
+                {isVideoPlayerMode && (
                   <>
                     <button
                       className="btn btn-secondary"
@@ -904,7 +936,7 @@ export function DemoVideoPlayer({
               </div>
 
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)' }}>
-                STREAM PROTOCOL: <strong style={{ color: 'var(--text-primary)' }}>{inferMode === 'mjpeg' ? 'MJPEG / Port 8000' : 'HTML5 Canvas Stream'}</strong>
+                STREAM PROTOCOL: <strong style={{ color: 'var(--text-primary)' }}>{isVideoPlayerMode ? 'HTML5 High-Performance Video Player' : 'MJPEG / Port 8000'}</strong>
               </div>
             </div>
           </div>

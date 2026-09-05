@@ -3,45 +3,63 @@
 
 The **Sentinel AI Inference Pipeline** is a real-time computer vision and ANPR (Automatic Number Plate Recognition) system designed for intelligent traffic surveillance, live camera streaming (RTSP/encrypted HLS), vehicle tracking, and automated plate recognition.
 
----
+-## 📂 Repository Contents
 
-## 📂 Repository Contents
+All trained and fine-tuned AI neural network models are centralized in the [`weights/`](file:///d:/Traing/JAVA/gov/model/weights/) folder:
 
 | File / Model Name | Description |
 | :--- | :--- |
-| 📓 [`SENTINEL_AI_INFERENCE_PIPELINE_(1) (1).ipynb`](file:///d:/Traing/JAVA/gov/model/SENTINEL_AI_INFERENCE_PIPELINE_%281%29%20%281%29.ipynb) | Full end-to-end interactive Jupyter Notebook containing all 42+ pipeline implementation steps. |
-| 🚗 [`yolo11n.pt`](file:///d:/Traing/JAVA/gov/model/yolo11n.pt) | Primary **YOLOv11 Nano** model for detecting vehicles (Cars, Buses, Trucks, Motorcycles) and running ByteTrack object tracking. |
-| 🏷️ [`license-plate-finetune-v1n.pt`](file:///d:/Traing/JAVA/gov/model/license-plate-finetune-v1n.pt) | Fine-tuned **YOLOv11** license plate localization model trained specifically to find plates inside cropped vehicle regions. |
-| ⚡ [`infer.py`](file:///d:/Traing/JAVA/gov/model/infer.py) | Standalone command-line Python runner to process video files, RTSP streams, or live feeds without Jupyter. |
+| 🛺 [`weights/uvh26_yolo11s.pt`](file:///d:/Traing/JAVA/gov/model/weights/uvh26_yolo11s.pt) | Primary **Indian Traffic YOLOv11-S** model (IISc Safe City CCTV) detecting 14 vehicle classes including **Auto-Rickshaws (3-wheelers)**, Two-wheelers, Cars, Trucks, Buses, Tempos, etc. |
+| 🛵 [`weights/bd_traffic.pt`](file:///d:/Traing/JAVA/gov/model/weights/bd_traffic.pt) | Secondary fast traffic model specialized for **CNG Auto-Rickshaws**, Cycle Rickshaws, Bikes, Cars, Trucks, and Buses. |
+| 🚗 [`weights/yolo11n.pt`](file:///d:/Traing/JAVA/gov/model/weights/yolo11n.pt) | Base COCO **YOLOv11 Nano** model providing general vehicle fallback verification. |
+| 🏷️ [`weights/license-plate-finetune-v1n.pt`](file:///d:/Traing/JAVA/gov/model/weights/license-plate-finetune-v1n.pt) | Fine-tuned **YOLOv11** license plate localization model trained specifically to locate number plates across all vehicle types (rickshaws, bikes, cars, trucks). |
+| ⚡ [`infer.py`](file:///d:/Traing/JAVA/gov/model/infer.py) | Standalone command-line Python runner to process video files, RTSP streams, or live feeds with full multi-model ByteTrack tracking & ANPR. |
+| 🌐 [`server.py`](file:///d:/Traing/JAVA/gov/model/server.py) | FastAPI microservice serving live streams (`/api/v1/streams/{camera_id}/mjpeg`), frame inference (`/api/v1/infer/frame`), and job orchestration on port 8000. |
+| 📓 [`PIPELINE2.ipynb`](file:///d:/Traing/JAVA/gov/model/PIPELINE2.ipynb) | Production Jupyter Notebook containing the full end-to-end Sentinel AI pipeline, model registry, live streaming, and watchlist alerts. |
 
 ---
 
-## 🏗️ Pipeline Architecture
+## 🏗️ Supported Vehicle Classes
+
+| Standard Class | Color Tag | Detected Types Included |
+| :--- | :--- | :--- |
+| **`auto_rickshaw`** | Amber / Gold | CNG 3-wheelers, Bajaj/Piaggio Auto-Rickshaws, Tuk-Tuks, E-Rickshaws |
+| **`rickshaw`** | Yellow | Human-powered cycle rickshaws |
+| **`motorcycle`** | Purple | Motorcycles, motorbikes, scooters, two-wheelers |
+| **`car`** | Emerald Green | Hatchbacks, sedans, SUVs, MUVs, private cars |
+| **`bus`** | Orange | Full-size passenger buses, school buses, mini-buses |
+| **`truck`** | Sky Blue | Goods trucks, lorries, pickups, LCVs, mini-trucks |
+| **`van`** | Teal | Tempo travellers, Omni/Eeco vans |
+| **`bicycle`** | Spring Green | Bicycles, cycles |
 
 ```mermaid
 graph TD
     A[Video Source / RTSP Stream / Encrypted HLS] --> B[Frame Extraction & PTS Timestamping]
-    B --> C["Primary Detection: YOLOv11 (yolo11n.pt)"]
-    C --> D[ByteTrack Tracking & VehicleMemory Voting]
-    D --> E[Vehicle Bounding Box Crop]
-    E --> F["Plate Localization: Fine-tuned YOLO (license-plate-finetune-v1n.pt)"]
-    F --> G[Plate Preprocessing: Contrast / Scale / Threshold Variants]
-    G --> H["OCR Recognition (EasyOCR / PaddleOCR)"]
-    H --> I[Indian License Plate Regex & Validation Engine]
-    I --> J[JSON Telemetry & Event Payload Generation]
+    B --> C["Primary Detection: Indian Traffic YOLOv11s (weights/uvh26_yolo11s.pt)"]
+    B --> D["Secondary Boost: Traffic / Rickshaw YOLO (weights/bd_traffic.pt)"]
+    B --> E["Verification Layer: COCO YOLOv11n (weights/yolo11n.pt)"]
+    C & D & E --> F[ByteTrack Tracking & VehicleMemory Voting]
+    F --> G[Vehicle Bounding Box Crops]
+    G --> H["Plate Localization: Fine-tuned YOLO (weights/license-plate-finetune-v1n.pt)"]
+    H --> I[Plate Preprocessing: Contrast / Scale / Threshold Variants]
+    I --> J["OCR Recognition (EasyOCR / PaddleOCR)"]
+    J --> K[Indian License Plate Regex & Temporal Fusion Engine]
+    K --> L[JSON Telemetry & Event Payload Generation]
 ```
 
 ### Key Technical Features
 
-1. **Dual-Model Cascade Architecture**:
-   - **Stage 1 (Vehicle Detection & Tracking)**: Uses `yolo11n.pt` with ByteTrack to assign unique persistent `track_id`s to vehicles. Smooths vehicle classification across frames via `VehicleMemory`.
-   - **Stage 2 (Plate Localization)**: Uses `license-plate-finetune-v1n.pt` on cropped vehicle regions for maximum precision and computational efficiency.
+1. **Multi-Model Cascade Architecture**:
+   - **Stage 1 (Primary Tracking)**: Uses `weights/uvh26_yolo11s.pt` with ByteTrack to track vehicles across 14 categories including Indian Auto-Rickshaws.
+   - **Stage 2 (Specialized Boost)**: Uses `weights/bd_traffic.pt` for CNG auto-rickshaw and cycle-rickshaw enhancement.
+   - **Stage 3 (General Fallback)**: Uses `weights/yolo11n.pt` to ensure zero missed standard COCO vehicle instances.
+   - **Stage 4 (Plate Localization)**: Uses `weights/license-plate-finetune-v1n.pt` for high-precision plate bounding boxes.
 2. **Stream Ingestion & Decryption**:
    - Native support for live RTSP camera feeds and AES-encrypted HLS stream playlists with frame presentation timestamps (PTS).
 3. **Multi-Variant OCR Engine**:
    - Supports **EasyOCR** and **PaddleOCR**.
-   - Generates image pre-processing variants (grayscale, cubic scaling, adaptive thresholding) to handle low-light or degraded plate images.
-   - Includes validation filters tuned for standard Indian License Plate formats (e.g. `MH12AB1234`).
+   - Generates image pre-processing variants (bicubic scaling, CLAHE, bilateral filter) to handle low-light or degraded plate images.
+   - Includes validation filters tuned for standard Indian License Plate formats (e.g. `GJ01AB1234`).
 4. **Structured JSON Telemetry**:
    - Emits structured JSON events containing ISO timestamps, frame PTS, track IDs, vehicle classes, bounding box coordinates, recognized plate strings, and confidence metrics.
 
@@ -81,8 +99,10 @@ python infer.py --source "rtsp://admin:pass@192.168.1.100:554/stream" --ocr-engi
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
 | `--source` | *Required* | Path to video file (`.mp4`, `.avi`) or RTSP stream URL. |
-| `--vehicle-model` | `yolo11n.pt` | Path to vehicle detection weights. |
-| `--plate-model` | `license-plate-finetune-v1n.pt` | Path to license plate localization weights. |
+| `--vehicle-model` | `weights/uvh26_yolo11s.pt` | Path to primary Indian traffic vehicle detection weights. |
+| `--secondary-model` | `weights/bd_traffic.pt` | Path to secondary auto-rickshaw and traffic weights. |
+| `--coco-model` | `weights/yolo11n.pt` | Path to COCO base vehicle fallback weights. |
+| `--plate-model` | `weights/license-plate-finetune-v1n.pt` | Path to license plate localization weights. |
 | `--ocr-engine` | `easyocr` | Engine choice: `easyocr`, `paddleocr`, or `none`. |
 | `--imgsz` | `640` | Inference image size for vehicle detector. |
 | `--conf` | `0.25` | Detection confidence threshold. |
@@ -93,19 +113,23 @@ python infer.py --source "rtsp://admin:pass@192.168.1.100:554/stream" --ocr-engi
 
 ### Option B: Interactive Jupyter Notebook
 
-Open and execute [`SENTINEL_AI_INFERENCE_PIPELINE_(1) (1).ipynb`](file:///d:/Traing/JAVA/gov/model/SENTINEL_AI_INFERENCE_PIPELINE_%281%29%20%281%29.ipynb) in Jupyter Notebook or Google Colab:
+Open and execute [`PIPELINE2.ipynb`](file:///d:/Traing/JAVA/gov/model/PIPELINE2.ipynb) in Jupyter Notebook:
 
 ```bash
-jupyter notebook "SENTINEL_AI_INFERENCE_PIPELINE_(1) (1).ipynb"
+jupyter notebook PIPELINE2.ipynb
 ```
 
-The notebook contains step-by-step cells organized into:
-- **Environment & Configuration** (Steps 1–3)
-- **HLS Stream Handling & Decryption** (Steps 4–13)
-- **Vehicle Detection & Tracking Setup** (Steps 14–16)
-- **License Plate Detection & Crop Extraction** (Steps 17–19)
-- **OCR Preprocessing & Text Validation** (Steps 20–37)
-- **Live RTSP Stream & Sentinel Event Generation** (Steps 38–42)
+The notebook contains step-by-step production cells organized into:
+- **Environment & Configuration** (Cells 1–4)
+- **Sentinel AI Production Model Registry & Health Check** (Cells 5–6)
+- **Sentinel Session, Auth & Dynamic Discovery** (Cells 7–17)
+- **AI Model Status & Warm-Up** (Cells 18–25)
+- **Plate Quality & Multi-Frame OCR Fusion** (Cells 26–36)
+- **End-to-End Vehicle + Plate + OCR Pipeline** (Cell 37)
+- **Sentinel AI Model API & Data Contract** (Cells 38–43)
+- **Watchlist & Alert Engine** (Cells 44–47)
+- **Cross-Camera Vehicle Journey Engine** (Cell 48)
+- **Live RTSP Stream & Real-Time Smooth Visualizer** (Cells 49–56)
 
 ---
 
