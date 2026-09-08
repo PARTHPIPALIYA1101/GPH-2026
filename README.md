@@ -130,7 +130,7 @@ Visit the administrative control room portal at **`http://localhost:5173`**.
 
 ## 📖 Documentation Quick Links
 
-- [Architecture Design](docs/architecture.md)
+- [Architecture Design ](docs/architecture.md)
 - [REST API Specification](docs/api.md)
 - [RBAC & Scope Security Model](docs/rbac.md)
 - [Database Schema & ERD](docs/database-schema.md)
