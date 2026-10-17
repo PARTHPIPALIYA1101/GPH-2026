@@ -16,6 +16,6 @@
     "react-dom": "^19.1.1",
     "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.8.2",
-    "vite": "^7.1.7"
+    "vite": "^8.2.2"
   }
 }
